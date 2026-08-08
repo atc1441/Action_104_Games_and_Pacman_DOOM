@@ -1,0 +1,229 @@
+diff --git upstream/include/doom_iwad.h repo/include/doom_iwad.h
+index 471f204..26e44e0 100644
+--- upstream/include/doom_iwad.h
++++ repo/include/doom_iwad.h
+@@ -1,7 +1,8 @@
+ #ifndef DOOM_IWAD_H
+ #define DOOM_IWAD_H
+ 
+-extern const unsigned char doom_iwad[];
++/* Pointer instead of array: the WAD lives in XIP flash, not in the image. */
++extern const unsigned char *const doom_iwad;
+ extern const unsigned int doom_iwad_len;
+ 
+ #endif // DOOM_IWAD_H
+diff --git upstream/source/d_main.c repo/source/d_main.c
+index 48d3085..ef02a4f 100644
+--- upstream/source/d_main.c
++++ repo/source/d_main.c
+@@ -386,6 +386,13 @@ static struct
+     const char *name;
+ }
+ 
++/*
++ * Changed for this console: the attract loop played demos, and those are
++ * recorded in levels from other episodes. The trimmed WAD contains only
++ * E1M1, so the engine aborted with "W_GetNumForName: E1M5 not found".
++ * The sequence now shows the title screen throughout instead.
++ * Drop this patch if you flash a full WAD.
++ */
+ const demostates[][4] =
+ {
+     {
+@@ -396,10 +403,10 @@ const demostates[][4] =
+     },
+ 
+     {
+-        {G_DeferedPlayDemo, "demo1"},
+-        {G_DeferedPlayDemo, "demo1"},
+-        {G_DeferedPlayDemo, "demo1"},
+-        {G_DeferedPlayDemo, "demo1"},
++        {D_SetPageName, "TITLEPIC"},
++        {D_SetPageName, "TITLEPIC"},
++        {D_SetPageName, "TITLEPIC"},
++        {D_SetPageName, "TITLEPIC"},
+     },
+     {
+         {D_SetPageName, "TITLEPIC"},
+@@ -409,10 +416,10 @@ const demostates[][4] =
+     },
+ 
+     {
+-        {G_DeferedPlayDemo, "demo2"},
+-        {G_DeferedPlayDemo, "demo2"},
+-        {G_DeferedPlayDemo, "demo2"},
+-        {G_DeferedPlayDemo, "demo2"},
++        {D_SetPageName, "TITLEPIC"},
++        {D_SetPageName, "TITLEPIC"},
++        {D_SetPageName, "TITLEPIC"},
++        {D_SetPageName, "TITLEPIC"},
+     },
+ 
+     {
+@@ -423,10 +430,10 @@ const demostates[][4] =
+     },
+ 
+     {
+-        {G_DeferedPlayDemo, "demo3"},
+-        {G_DeferedPlayDemo, "demo3"},
+-        {G_DeferedPlayDemo, "demo3"},
+-        {G_DeferedPlayDemo, "demo3"},
++        {D_SetPageName, "TITLEPIC"},
++        {D_SetPageName, "TITLEPIC"},
++        {D_SetPageName, "TITLEPIC"},
++        {D_SetPageName, "TITLEPIC"},
+     },
+ 
+     {
+@@ -607,6 +614,16 @@ static void IdentifyVersion()
+ 
+     if (_g->gamemode == indetermined)
+     {
++        /*
++         * Changed for this console: the game mode is inferred from the
++         * number of levels present (sw >= 9 for shareware). Our WAD holds
++         * only E1M1, so no threshold matches and the mode would stay
++         * "indetermined". M_NewGame then picks the four-entry episode menu
++         * and aborts with "M_EPI4 not found", because episode 4 only
++         * exists in Ultimate Doom.
++         * Drop this patch if you flash a full WAD.
++         */
++        _g->gamemode = shareware;
+         //jff 9/3/98 use logical output routine
+         lprintf(LO_WARN,"Unknown Game Version, may not work\n");
+     }
+diff --git upstream/source/r_hotpath.iwram.c repo/source/r_hotpath.iwram.c
+index d52386d..1a57844 100644
+--- upstream/source/r_hotpath.iwram.c
++++ repo/source/r_hotpath.iwram.c
+@@ -3297,26 +3297,27 @@ void P_RunThinkers (void)
+ 
+ 
+ 
+-static int I_GetTime_e32(void)
++/* Changed: this reads a GBA timer register and is unused on this
++ * console. Renamed only so that it stops shadowing the global platform
++ * function of the same name in port/i_system_console.c - which is what
++ * made the game freeze on a black screen for a while. */
++static int I_GetTime_gbatimer(void) __attribute__((unused));
++static int I_GetTime_gbatimer(void)
+ {
+     int thistimereply = *((unsigned short*)(0x400010C));
+ 
+     return thistimereply;
+ }
+ 
++/* Time base for this port: the core cycle counter, 35 Hz. */
++extern int I_GetTime_e32(void);
++
+ 
+ int I_GetTime(void)
+ {
+     int thistimereply;
+ 
+-#ifndef GBA
+-
+-    clock_t now = clock();
+-
+-    thistimereply = (int)((double)now / ((double)CLOCKS_PER_SEC / (double)TICRATE));
+-#else
+     thistimereply = I_GetTime_e32();
+-#endif
+ 
+     if (thistimereply < _g->lasttimereply)
+     {
+diff --git upstream/source/z_zone.c repo/source/z_zone.c
+index d4de6a2..582ffd9 100644
+--- upstream/source/z_zone.c
++++ repo/source/z_zone.c
+@@ -40,7 +40,12 @@
+ 
+ #define ZONEID	0x1d4a11
+ 
+-const unsigned int maxHeapSize = (256 * 1024);
++/* Changed for this console: usable SRAM is 0x20000000-0x20045FFF (280 KB,
++ * measured on the device). Roughly 62 KB go to .bss including the
++ * framebuffer and 8 KB to the stack, leaving about 209 KB.
++ * Z_Init would shrink the request itself, but in 4-byte steps - starting
++ * from a realistic value skips that very long loop. */
++const unsigned int maxHeapSize = (200 * 1024);
+ 
+ #ifndef GBA
+     static int running_count = 0;
+diff --git upstream/source/g_game.c repo/source/g_game.c
+index 2275c69..cf802cc 100644
+--- upstream/source/g_game.c
++++ repo/source/g_game.c
+@@ -671,10 +671,57 @@ void G_SecretExitLevel (void)
+ // G_DoCompleted
+ //
+ 
++/*
++ * Changed for this console: reboot when the finished level has no
++ * successor in the WAD.
++ *
++ * The flash only fits a trimmed IWAD, so after E1M1 there is no E1M2.
++ * A first attempt returned to the title screen from G_DoWorldDone, which
++ * still hung - the intermission screen runs before that and wants
++ * graphics for the "next level" that are not there either. So the reset
++ * goes here, at the very first instruction after the exit is taken, where
++ * nothing downstream can trip over the missing map.
++ *
++ * A system reset is a clean restart on this console: the boot ROM runs,
++ * the bootloader re-initialises the flash controller and jumps back to
++ * 0x08004000, and the player lands on the DOOM title screen.
++ *
++ * Harmless with a full WAD: the next map exists and this does nothing.
++ */
++static boolean G_NextMapExists(void)
++{
++    char name[9];
++    int  map = _g->gamemap + 1;
++
++    if (_g->gamemode == commercial)
++    {
++        if (map < 1 || map > 99) return false;
++        name[0] = 'M'; name[1] = 'A'; name[2] = 'P';
++        name[3] = '0' + (map / 10);
++        name[4] = '0' + (map % 10);
++        name[5] = 0;
++    }
++    else
++    {
++        if (map < 1 || map > 9) return false;
++        name[0] = 'E';
++        name[1] = '0' + _g->gameepisode;
++        name[2] = 'M';
++        name[3] = '0' + map;
++        name[4] = 0;
++    }
++    return W_CheckNumForName(name) != -1;
++}
++
++extern void I_Reboot_console(void);   /* port/i_system_console.c */
++
+ void G_DoCompleted (void)
+ {
+     _g->gameaction = ga_nothing;
+ 
++    if (!G_NextMapExists())
++        I_Reboot_console();        // does not return
++
+     if (_g->playeringame)
+         G_PlayerFinishLevel(0);        // take away cards and stuff
+ 
+diff --git upstream/source/lprintf.c repo/source/lprintf.c
+index d5ef6bc..6010c09 100644
+--- upstream/source/lprintf.c
++++ repo/source/lprintf.c
+@@ -41,6 +41,10 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <stdarg.h>
++/* Changed for this port: strlen() below was used without a
++ * declaration. A warning up to GCC 13 and an error from GCC 14 on,
++ * so the build would break on newer toolchains - CI included. */
++#include <string.h>
+ 
+ #include "doomtype.h"
+ #include "lprintf.h"

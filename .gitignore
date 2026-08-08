@@ -1,0 +1,27 @@
+# build output
+firmware/build/
+tools/flashwriter/build/
+
+# dumps you make yourself - keep your own backup out of the repo
+stock_backup.bin
+*.bak
+
+# IDA working databases, created next to a dump when you open it
+*.id0
+*.id1
+*.id2
+*.nam
+*.til
+*.idb
+*.i64
+
+# editors / OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store
+
+# python
+__pycache__/
+*.pyc

@@ -1,0 +1,101 @@
+name: build
+
+# Builds both consoles and publishes a release on every push.
+#
+# The version is v1.0.<run number>, and GitHub increments that run number
+# by itself for every workflow run - so each release is one higher than
+# the last without any state kept in the repository.
+#
+# This fires on every branch. To publish only from the default branch,
+# add a `branches: [main]` filter under `push` below.
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the ARM toolchain
+        run: |
+          sudo apt-get update
+          # libnewlib is a separate package on Ubuntu and the build needs
+          # it: the link uses --specs=nano.specs and the port calls
+          # vsnprintf. Without it the compiler installs fine and the link
+          # fails on missing specs, which reads like a broken Makefile.
+          sudo apt-get install -y gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi
+          arm-none-eabi-gcc --version
+
+      - name: Build both consoles
+        run: |
+          make -C firmware BOARD=action104
+          make -C firmware BOARD=pacman
+          make -C tools/flashwriter
+
+      - name: Collect the binaries
+        id: collect
+        run: |
+          VERSION="v1.0.${{ github.run_number }}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          mkdir -p release
+          cp firmware/build/action104/doom.bin  "release/doom-action104-$VERSION.bin"
+          cp firmware/build/pacman/doom.bin     "release/doom-pacman-$VERSION.bin"
+          cp tools/flashwriter/build/writer.bin "release/flashwriter-$VERSION.bin"
+          cp wad/doom1_e1m1.wad                 release/
+
+          # Sizes go into the release notes - a firmware that suddenly
+          # grew or shrank by a lot is worth noticing before flashing it.
+          {
+            echo "| File | Bytes |"
+            echo "|---|---|"
+            for f in release/*; do
+              printf '| `%s` | %s |\n' "$(basename "$f")" "$(stat -c%s "$f")"
+            done
+          } > sizes.md
+          cat sizes.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ steps.collect.outputs.version }}
+          path: release/
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.collect.outputs.version }}"
+
+          {
+            echo "Built from \`${{ github.sha }}\` on \`${{ github.ref_name }}\`."
+            echo
+            cat sizes.md
+            echo
+            echo "## Flashing"
+            echo
+            echo "Needs a SWD probe and \`pip install pylink-square\`."
+            echo "**Dump your stock firmware first** - it is the only way back."
+            echo "See [docs/FLASHING.md](docs/FLASHING.md)."
+            echo
+            echo '```sh'
+            echo "python tools/flash.py read stock_backup.bin 0x08000000 0x400000"
+            echo "python tools/flash.py write doom-action104-$VERSION.bin 0x08004000   # or doom-pacman-*"
+            echo "python tools/flash.py write doom1_e1m1.wad              0x08110000"
+            echo '```'
+            echo
+            echo "\`flashwriter-$VERSION.bin\` is the RAM-resident writer that"
+            echo "\`flash.py\` loads; it is included so nothing has to be built"
+            echo "locally. \`flash.py\` expects it at"
+            echo "\`tools/flashwriter/build/writer.bin\`."
+          } > notes.md
+
+          gh release create "$VERSION" release/* \
+            --title "$VERSION" \
+            --notes-file notes.md
