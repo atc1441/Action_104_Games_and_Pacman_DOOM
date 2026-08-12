@@ -428,7 +428,10 @@ int R_FlatNumForName(const char *name)    // killough -- const added
 // killough 1/21/98, 1/31/98
 //
 
-int PUREFUNC R_CheckTextureNumForName (const char *name)
+//Not PUREFUNC: R_GetTextureNumForName() updates the tex_lookup_last_* memo
+//in global state, so this observably writes memory.
+
+int R_CheckTextureNumForName (const char *name)
 {
     // "NoTexture" marker.
     if (name[0] == '-')

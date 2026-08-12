@@ -120,7 +120,12 @@ static void W_AddFile()
 //Return -1 if not found.
 //Set lump ptr if found.
 
-static int PUREFUNC FindLumpByName(const char* name, const filelump_t** lump)
+//Note: This must NOT be PUREFUNC. It writes through the *lump out parameter,
+//which a pure function is not allowed to do. With pure the compiler tail calls
+//it from W_CheckNumForName() and releases that frame first, so the write to
+//*lump lands on the already freed stack slot holding the return address.
+
+static int FindLumpByName(const char* name, const filelump_t** lump)
 {
     const wadinfo_t* header;
     const filelump_t  *fileinfo;
