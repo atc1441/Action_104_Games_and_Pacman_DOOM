@@ -1,15 +1,18 @@
 # Flashing
 
-Everything here needs one thing only: a SWD probe. A SEGGER J-Link is what
-this was developed with; anything that speaks SWD and can read and write
-memory will do, but the scripts here use [pylink](https://pypi.org/project/pylink-square/)
-and therefore a J-Link.
+A SWD probe is enough. Two host paths talk to the same RAM writer:
+
+* **SEGGER J-Link** — `tools/flash.py` via
+  [pylink](https://pypi.org/project/pylink-square/). Same RAM writer, same
+  `--leave-halted` flag.
+* **CMSIS-DAP / OpenOCD** — `tools/flash_openocd.py` and
+  `tools/openocd/star_mc1.cfg` (Pico 2 debugprobe).
 
 For 194 MHz images, pass `--leave-halted` and power-cycle with the probe
 idle so SWD is not attached across the PLL source switch.
 
 ```sh
-pip install pylink-square
+pip install pylink-square    # J-Link path only
 ```
 
 ## Wiring
@@ -59,6 +62,7 @@ make                                   # or: make CROSS=/path/to/arm-none-eabi-
 ```sh
 cd tools
 python flash.py read stock_backup.bin 0x08000000 0x400000
+# or: python flash_openocd.py read stock_backup.bin 0x08000000 0x400000
 ```
 
 This takes a couple of minutes and is the single most important step. It is
@@ -84,6 +88,7 @@ python flash.py write ../firmware/build/action104/doom.bin 0x08004000 --leave-ha
 python flash.py write ../wad/doom1_e1m1_sfx.wad            0x08090000 --leave-halted
 ```
 
+OpenOCD / CMSIS-DAP is the same command with `flash_openocd.py`.
 
 Unplug the probe, then power-cycle. Do not resume with SWD still attached.
 
@@ -118,6 +123,8 @@ the same broken firmware restarts and hangs again within milliseconds.
 ```sh
 cd tools
 python rescue.py --write ../firmware/build/action104/doom.bin --addr 0x08004000
+# CMSIS-DAP:
+python rescue_openocd.py --write ../firmware/build/action104/doom.bin --addr 0x08004000
 ```
 
 Start it, then interrupt the console's power repeatedly - pull a battery,

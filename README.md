@@ -218,6 +218,7 @@ are the pair marked in the photo in [docs/FLASHING.md](docs/FLASHING.md).
 ```sh
 cd tools/flashwriter && make && cd ..
 python flash.py read stock_backup.bin 0x08000000 0x400000
+# or: python flash_openocd.py read stock_backup.bin 0x08000000 0x400000
 ```
 
 Do not skip this. It is the only way back to the original console, and this
@@ -232,9 +233,12 @@ the probe idle:
 ```sh
 python flash.py write ../firmware/build/action104/doom.bin 0x08004000 --leave-halted
 python flash.py write ../wad/doom1_e1m1_sfx.wad            0x08090000 --leave-halted
+# CMSIS-DAP / OpenOCD: flash_openocd.py, same arguments
 ```
 
-Use `build/pacman/doom.bin` for the other console; the WAD is the same.
+J-Link (`flash.py`) and OpenOCD (`flash_openocd.py`) share the RAM writer
+and the `--leave-halted` flag. Use `build/pacman/doom.bin` for the other
+console; the WAD is the same.
 
 The bootloader at `0x00000000` is untouched and keeps working - it is what
 jumps to `0x08004000`. Secure boot is not active: the bootloader validates
@@ -247,7 +251,8 @@ python flash.py write stock_backup.bin 0x08000000
 ```
 
 If a bad flash leaves a console unreachable over SWD, `tools/rescue.py`
-catches the core in the window between power-on and the crash. See
+(J-Link) or `tools/rescue_openocd.py` (CMSIS-DAP) catches the core in the
+window between power-on and the crash. See
 [docs/FLASHING.md](docs/FLASHING.md#when-swd-stops-responding).
 
 ---
@@ -263,7 +268,7 @@ firmware/          the DOOM firmware, standalone build
   sdk/             clock, LCD, input, audio DMA, mailbox, startup
   port/            GBADoom's platform layer (including the mixer)
   GBADoom/         vendored engine + engine-patches.diff
-tools/             what you need to flash: flash.py, the RAM writer, rescue.py
+tools/             flash.py (J-Link), flash_openocd.py (CMSIS-DAP), RAM writer, rescue
 wad/               trimmed shareware WAD (E1M1 + DS* sound lumps)
 dumps/             stock firmware and boot ROM, one folder per console
 docs/              hardware notes, flashing guide, porting guide
