@@ -11,6 +11,7 @@
 #include "soc.h"
 
 extern uint32_t _sidata, _sdata, _edata, _sbss, _ebss, _estack;
+extern uint32_t _siramfunc, _sramfunc, _eramfunc;
 
 int  main(void);
 void Reset_Handler(void);
@@ -78,6 +79,14 @@ void Reset_Handler(void)
     dst = &_sdata;
     if (src != dst) {
         while (dst < &_edata) { *dst++ = *src++; }
+    }
+
+    /* MPI retune in .ramfunc must run from SRAM. PLL lock and source
+     * switch run from flash afterwards, matching stock app_board_init. */
+    src = &_siramfunc;
+    dst = &_sramfunc;
+    if (src != dst) {
+        while (dst < &_eramfunc) { *dst++ = *src++; }
     }
 
     /* zero .bss */

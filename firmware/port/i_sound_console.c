@@ -25,11 +25,16 @@
 #include "lprintf.h"
 
 #include "audio.h"
+#include "input.h"
+
+const int snd_samplerate = 14016;
 
 /*
  * Output rate, measured rather than assumed: audio_blocks() counts
  * completed DMA blocks, and 741 samples per block over 12 seconds gave
- * 14016 Hz (a 3-second run gave 14071, so it is stable).
+ * 14016 Hz (a 3-second run gave 14071, so it is stable). Forest Kid's
+ * live descriptor reloads 737 samples; the DAC divider is unchanged, so
+ * the rate stands until it is measured again.
  *
  * The DAC's rate divider was never identified in the register map, so
  * this number comes from the stopwatch, not the datasheet. If you change
@@ -184,6 +189,11 @@ void audio_fill(uint16_t *dst, unsigned n)
  */
 void audio_fill(uint16_t *dst, unsigned n)
 {
+    /* Stock DAT_2000044c is 0..3 with divisors 5 / 2 / 1 (and 0 = mute).
+     * Extra shifts of 2 / 1 / 0 are 1/4 / 1/2 / full. Mute zeros the mix. */
+    const unsigned v = input_volume();
+    const unsigned shift = (v == 0) ? 0 : (7u + 3u - v);
+
     for (unsigned i = 0; i < n; i++) {
         int32_t acc = 0;
 
@@ -206,7 +216,8 @@ void audio_fill(uint16_t *dst, unsigned n)
          * below turns the waveform into a square, which sounds like
          * distortion rather than DOOM.
          */
-        acc >>= 7;
+        if (v == 0) acc = 0;
+        else        acc >>= shift;
         acc += 128;
         if (acc < 0)   acc = 0;
         if (acc > 255) acc = 255;
@@ -229,7 +240,7 @@ void I_InitSound(void)
 
 /*
  * Music. DOOM's MUS format needs an OPL synth to sound like anything, and
- * that is a poor trade on a 62 MHz core that is already busy rendering.
+ * that is a poor trade on a core that is already busy rendering.
  * The hooks stay so the engine has something to call.
  */
 void I_PlaySong(int handle, int looping)  { (void)handle; (void)looping; }

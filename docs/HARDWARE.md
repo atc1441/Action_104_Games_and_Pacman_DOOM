@@ -118,30 +118,29 @@ On this device Fref is 15,525,065 Hz and `+0x4C` is `0x326` (M=38, P=3,
 Q=0), giving 194.06 MHz - which is what the stock firmware runs at.
 
 The bootloader hands over at 16 MHz. `clock_init()` in
-`firmware/sdk/clock.c` replicates the stock SystemInit and reaches ~62 MHz.
+`firmware/sdk/clock.c` replicates the stock SystemInit (~62 MHz) and then
+`clock_boost()` takes the PLL to **~194 MHz**, matching stock
+`app_board_init`. Confirmed live: `source=3`, `R20=0x80002400`,
+`PLLCFG=0x326`, `g_cpu_hz=194063312`, hostbox `mark=9`.
 
-### Why 194 MHz does not work here yet
+### Clock boost (what actually failed, and what fixed it)
 
-The full PLL sequence is in `clock_boost()` and is correct - it was read
-straight out of `app_board_init` at `0x0802AD96`. It still hangs the SoC,
-and the reason has nothing to do with the register order:
+The PLL sequence in `clock_boost()` is the stock one (`0x0802AA70` /
+`0x0802AD96`). Early hangs were not "XIP cannot survive a clock jump" in
+the abstract. Three things all have to be true:
 
-**This firmware executes via XIP from the external SPI flash.** When the
-core clock jumps, the flash interface timing no longer holds and the very
-next instruction fetch fails. The signature is distinctive: current draw
-goes from 61 mA to 124 mA, the display stays dark, the debug port is gone.
-The PLL is running perfectly - the core just cannot read another
-instruction.
+1. **MPI retune from RAM.** A `.ramfunc` ORs `0x100` into MPI `+0x10` and
+   keeps divider 2 *before* the source switch. Stock copies a Thumb stub
+   to SRAM for the same reason (`0xF8413A01` / `0xD1F90F04`).
+2. **The rest of the sequence, including OSC bit 3 and R20 `0x2400`.**
+   Missing those looks like a PLL that "worked" and then died.
+3. **Do not attach SWD across `RCC+0x1C` source=`3`.** That desyncs the
+   MEM-AP even if the CPU is halted. Flash with `--leave-halted` and
+   power-cycle with the probe idle. Attach is safe *after* the switch.
 
-The stock firmware handles this the only way that works. Before touching
-the flash controller it copies a small routine into RAM at `0x0802AA70`
-(the stored constants `0xF8413A01` / `0xD1F90F04` are Thumb code:
-`SUBS r2,#1` / `STR.W r0,[r1,#4]!` / `BNE`), checks `0x52005004` and
-`0x52005010`, masks interrupts, and calls it there.
-
-To finish this: move `clock_boost()` into a `.ramfunc` section, copy it to
-RAM at startup, call it with interrupts masked, and bring the MPI divider
-along with the core clock.
+A 61 MHz image (build without `-DENABLE_CLOCK_BOOST` in the Makefile) is
+the fallback if a boost flash goes wrong: no source switch, so SWD stays
+attachable.
 
 ## Display
 
@@ -228,8 +227,9 @@ Handled separately:
 
 * **PC7 = MENU.** In `app_input_poll` this pin shuts peripherals and the
   LCD SPI down, so it is closer to a power button than a game button.
-* **PA0, PB2, PC13** are the three-position volume slider, read by a
-  RAM-resident routine at `0x20036000` that prints `AudioVolume:%d`.
+* **PA0, PB2, PC13** are watched by stock `FUN_0803ec10` for volume
+  (up / down / ping-pong 0..3, prints `AudioVolume:%d`). The case only
+  exposes one volume button; unused pins stay high.
 
 All of this was then confirmed on the device by pressing each button and
 watching the mirrored input registers: ten distinct pins, all from the set
@@ -255,8 +255,9 @@ nothing else left. No strafe key on this console.
 
 ## Audio
 
-Not implemented yet, but fully mapped - the block below was read off the
-running stock firmware over SWD, the same way the LCD registers were.
+Mapped from the running stock firmware over SWD, including a live dump
+while **Forest Kid** was playing (it starts sound on load). `sdk/audio.c`
+and `port/i_sound_console.c` are built.
 
 A PCM/DAC block at **`0x40012C00`**, fed by DMA:
 
@@ -268,7 +269,7 @@ A PCM/DAC block at **`0x40012C00`**, fed by DMA:
 | `+0x14` | | written during start |
 | `+0x18` | `0x00000068` | likely a divider |
 | `+0x20` | `0x00000001` | bit 0 = enable, last thing set |
-| `+0x24` | `0x00000089` | |
+| `+0x24` | live counter | **not** config; it keeps changing with the CPU halted |
 | `+0x28` | `0x00000010` | |
 | `+0x2C` | `0x000000FF` | |
 | `+0x34` | | data register - DMA writes here |
@@ -286,10 +287,14 @@ Channels are `0x40` apart from `0x40031100`. Two are in use:
 | 0 | `0x40012C34` - the audio data register |
 | 1 | `0x40030000` - the LCD SPI data register |
 
-Channel 0 live: source advancing through the sample buffer, `+0x0C` =
-`0x854002CA` (the low half counts down, so it is the remaining transfer
-count), `+0x10` = `0x000A0083` with bit 0 as the channel enable. Global
-`+0x14` bit 0 signals "channel done" and `+0x08` acknowledges it.
+Channel 0 while Forest Kid plays: source walking the ping-pong buffers,
+`+0x08` stuck at the descriptor (`0x20044BA0`), `+0x0C` high half `0x8540`
+with the low half counting down, `+0x10` = `0x000A0083` (bit 0 = enable).
+Stock `FUN_0803f080` programs CTRL as `0x854002DF` (735 samples) then
+patches the count; the live descriptor reload was `0x854002E1` (737).
+Global `+0x14` bit 0 is "channel done" and `+0x08` acknowledges it. The
+stock mixer waits on that bit; a self-looping descriptor also lets the
+channel keep running if the bit is a pulse the poller can miss.
 
 Channel 1 is worth remembering independently of audio: the display can be
 driven by DMA rather than the byte-pushing loop in `lcd.c`, which is where
@@ -302,8 +307,10 @@ samples. DMA channel 0 streams one while the firmware refills the other;
 on the done flag it acknowledges, swaps the pointers (kept at
 `0x20044B94`/`0x20044B98`) and refills. Sample values are 8-bit source
 data divided by a volume divisor from a table at `0x080341D0`, indexed by
-the volume variable - so **volume is done in software**, which is why the
-three-position slider is just three GPIO pins.
+the volume variable (0..3). Volume is software; the case has **one
+volume button**. Stock `FUN_0803ec10` ping-pongs that level (PA0 up, PB2
+down, PC13 bounce) and prints `AudioVolume:%d`. DOOM does the same in
+`input_volume()` / the mixer.
 
 Output is 16-bit, so this is a real DAC path, not one-bit PWM.
 
@@ -326,13 +333,13 @@ The output rate is **~14 kHz**, measured by counting completed DMA blocks
 
 ### Where it stands
 
-`firmware/sdk/audio.c` and `firmware/port/i_sound_console.c` hold a
-working bring-up and a software mixer. They are **not built** - see the
-note in the Makefile - because they never got as far as usable sound.
-What they contain is real though, and it is the starting point for
-anyone finishing this.
+Sound effects work on hardware (104 Games: menu blips and in-game SFX).
+`firmware/sdk/audio.c` streams ping-pong buffers through an 8-word
+self-looping DMA descriptor; `firmware/port/i_sound_console.c` mixes eight
+channels from `DS*` lumps in XIP. The volume button ping-pongs four gains.
+There is no music.
 
-What is proven to work:
+What was proven along the way:
 
 * the DAC configures and the DMA channel arms exactly as in the stock
   firmware, down to `CFG` reading back `0x000A0083`
@@ -342,23 +349,25 @@ What is proven to work:
   length and a resampling step of `0xC95E`, which is exactly
   11025/14016
 
-The wall is the reload mechanism. The channel plays one buffer of 741
-samples, loads the next source address from the word its `+0x08` points
-at, and then stops with the transfer count at zero - the count is not
-reloaded with it. So the output is one buffer and then silence, or one
-buffer repeating, which is what the tone was.
+The reload mechanism is one **8-word self-looping descriptor**. Forest
+Kid live at `0x20044BA0`:
 
-Two things were tried and did not work: re-arming `+0x08` from software
-on every buffer switch, and treating `+0x08` as the head of a
-scatter-gather chain whose fields mirror the channel registers
-(`SRC/DST/NEXT/CTRL`). The second one transferred a couple of hundred
-samples and stalled, so that field layout is wrong.
+| Offset | Value | Role |
+|---|---|---|
+| `+0x00` | ping-pong base | SRC; firmware patches this |
+| `+0x04` | `0x40012C34` | DST (DAC data) |
+| `+0x08` | `0x20044BA0` | NEXT (self) |
+| `+0x0C` | `0x854002E1` | CTRL; low half is the reload count (737) |
+| `+0x10` | `0x40012C00` | DAC base (also the firmware's DAC pointer) |
+| `+0x14` | `0x00000010` | same as DAC `+0x28` |
+| `+0x18` | `0x000000FF` | same as DAC `+0x2C` |
+| `+0x1C` | `0x00000001` | |
 
-**The next step is to read the stock descriptor rather than guess it.**
-The stock firmware's `+0x08` pointed at `0x20044BA0`; dump 32 bytes from
-there while it is playing and the layout is settled. That needs one more
-stock-firmware restore cycle - the same procedure that produced
-everything else in this section.
+Stock `FUN_0803f080` writes the first four words the same way (NEXT =
+self, channel SRC = buffer A, descriptor SRC = buffer B) and keeps
+buffer bases at `0x20044B94` / `0x20044B98` (stride `0x5CA` = 741
+halfwords). A one-word next-SRC and a 4-word two-buffer chain both
+stalled; the self-loop is what actually runs.
 
 Two smaller findings worth keeping:
 
@@ -371,20 +380,17 @@ Two smaller findings worth keeping:
   `i_sound_console.c` replaces it with an eight-channel mixer reading the
   `DS*` lumps straight out of XIP flash.
 
-### A trap in the WAD
+### The WAD
 
-The WAD shipped here has **no sound lumps at all**. `GbaWadUtil` strips
-them, because GBADoom plays sound from a Maxmod soundbank instead. The
-original shareware IWAD is in the GBADoom tree at
-`GbaWadUtil/doom1.wad` and does have all 55 `DS*` lumps, 523 KB of them.
-Merging those back in is a few lines; the only catch is that the result
-is 3.23 MB and no longer fits below the WAD base, so the base has to move
-down to about `0x08090000`.
+GBADoom's shipped WAD has **no sound lumps** (`GbaWadUtil` strips them for
+Maxmod). `wad/doom1_e1m1_sfx.wad` is E1M1 plus the 55 `DS*` lumps from
+shareware `doom1.wad` (`tools/merge_sfx.py`). That is ~3.1 MB, so the WAD
+base is **`0x08090000`**, not `0x08110000`.
 
-## Two ways to lose the debug port
+## Three ways to lose the debug port
 
-Both look identical from outside - VTref fine, current normal, `Failed to
-attach to CPU` - and both need a power cycle.
+All three look identical from outside - VTref fine, current normal,
+`Failed to attach to CPU` - and all need a power cycle.
 
 1. **Writing GPIO registers over SWD** wedges the debug bus, whether the
    core is running or halted. Reading SRAM and peripherals is fine. So pin
@@ -393,3 +399,6 @@ attach to CPU` - and both need a power cycle.
 2. **`wfi` in an endless loop** (fault handlers, `I_Error`) powers the
    debug domain down and makes a crash impossible to investigate. Use
    `for(;;){}`.
+3. **Attaching SWD across the PLL source switch** (`RCC+0x1C` source=`3`)
+   desyncs the MEM-AP. Flash boost images `--leave-halted` and power-cycle
+   with the probe idle. Attach after the console has already booted.

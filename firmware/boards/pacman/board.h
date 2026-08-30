@@ -166,7 +166,7 @@ static const lcd_cmd_t board_lcd_init_seq[] = {
  * The wiring turned out to be identical to the 104-games board: the same
  * pins carry the d-pad, and the same two carry A and B. This console just
  * populates fewer of them, and its VOL+/VOL- sit on two of the pins the
- * other board used for its three-position volume slider.
+ * other board used for its volume button (PA0 / PB2 / PC13).
  *
  * VOL+ and VOL- become START and SELECT: DOOM needs those far more than
  * it needs volume control, and there is nothing else left to use.

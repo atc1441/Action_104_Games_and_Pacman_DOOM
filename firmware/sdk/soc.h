@@ -114,7 +114,13 @@ static inline void gpio_mode(uint32_t port, uint32_t pin, uint32_t mode)
  * (app 0x0803000A..0x08030024).
  * ------------------------------------------------------------------ */
 #define SPI_LCD_BASE    0x40030000u
-#define SPI_FLASH_BASE  0x52005000u   /* hands off */
+#define SPI_FLASH_BASE  0x52005000u   /* XIP; write +0x04/+0x10 only from RAM */
+
+/* BootROM FUN_00002800 writes the low 16 bits of +0x04 (DIV2FAIL / DIV4FAIL).
+ * Stock app_board_init only calls its RAM stub when that field is 2 and
+ * +0x10 bits 8:9 are clear. */
+#define SPI_FLASH_DIV    REG32(SPI_FLASH_BASE + 0x04)
+#define SPI_FLASH_RXCTL  REG32(SPI_FLASH_BASE + 0x10)
 
 #define SPI_DR(b)    REG32((b) + 0x00)   /* data register, byte at a time  */
 #define SPI_CR0C(b)  REG32((b) + 0x0C)   /* set bit0 before every byte     */
@@ -128,21 +134,17 @@ static inline void gpio_mode(uint32_t port, uint32_t pin, uint32_t mode)
 /* ------------------------------------------------------------------ *
  * Audio                                                      [V]
  *
- * A PCM/DAC block fed by DMA. Nothing is implemented against it yet, but
- * the map below was read off the running stock firmware, so it is a
- * starting point rather than a guess.
+ * A PCM/DAC block fed by DMA. Driver in sdk/audio.c; mixer in
+ * port/i_sound_console.c. Confirmed on hardware (menu blips and SFX).
  *
- * How it works in the stock firmware: two ping-pong buffers in SRAM
- * (0x20044000 and 0x200445CA) hold 16-bit samples; DMA channel 0 streams
- * them into AUDIO_DATA. When the channel reports done, the firmware
- * acknowledges, swaps the buffers and refills. Sample values come from
- * 8-bit source data divided by a volume divisor - so volume is done in
- * software, which fits the three-position slider on GPIO.
+ * Stock: two ping-pong buffers in SRAM; DMA channel 0 streams them into
+ * AUDIO_DATA via an 8-word self-looping descriptor. Sample values come
+ * from 8-bit PCM divided by a volume divisor. Volume is software; the
+ * 104 Games case has one button that ping-pongs levels 0..3.
  *
- * Register values observed while the stock firmware was running and
- * playing:
+ * Register values observed while the stock firmware was playing:
  *   +0x00 = 0x00000081   +0x0C = 0x00000200   +0x10 = 0x00000003
- *   +0x18 = 0x00000068   +0x20 = 0x00000001   +0x24 = 0x00000089
+ *   +0x18 = 0x00000068   +0x20 = 0x00000001   +0x24 = live counter
  *   +0x28 = 0x00000010   +0x2C = 0x000000FF   +0x44 = 0x00008000
  *
  * The start sequence, from app_board_init:

@@ -10,6 +10,7 @@ mailbox in SRAM.
   python flash.py id                       # read the JEDEC id only
   python flash.py read  out.bin 0x08000000 0x400000
   python flash.py write img.bin 0x08004000
+  python flash.py write img.bin 0x08004000 --leave-halted
   python flash.py verify img.bin 0x08004000
 
 The writer takes the controller out of XIP mode. While it runs the flash
@@ -243,6 +244,8 @@ def main():
     p = sub.add_parser('read');   p.add_argument('file'); p.add_argument('addr'); p.add_argument('len')
     p = sub.add_parser('write');  p.add_argument('file'); p.add_argument('addr')
     p.add_argument('--no-verify', action='store_true')
+    p.add_argument('--leave-halted', action='store_true',
+                   help='do not resume after write (boot without the probe)')
     p = sub.add_parser('verify'); p.add_argument('file'); p.add_argument('addr')
     args = ap.parse_args()
 
@@ -267,9 +270,15 @@ def main():
             time.sleep(0.2)
         except Exception:
             pass
-        jl.reset(halt=False)
+        if getattr(args, 'leave_halted', False):
+            jl.reset(halt=True)
+        else:
+            jl.reset(halt=False)
         jl.close()
-        print("Done, console restarted.")
+        if getattr(args, 'leave_halted', False):
+            print("Done, core left halted. Power-cycle to boot without SWD.")
+        else:
+            print("Done, console restarted.")
 
 
 if __name__ == '__main__':

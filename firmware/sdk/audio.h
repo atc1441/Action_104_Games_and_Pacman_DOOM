@@ -11,9 +11,9 @@
  * firmware does. See docs/HARDWARE.md for how that was worked out.
  */
 
-/* Samples per buffer. Matches the stock firmware's geometry (0x5CA bytes
- * = 741 halfwords), so the DMA settings copied from it stay valid. */
-#define AUDIO_BUF_SAMPLES 741
+/* Samples per DMA buffer. Live Forest Kid: ping-pong stride is 0x5CA
+ * (741 halfwords) but the descriptor reload count is 0x2E1 = 737. */
+#define AUDIO_BUF_SAMPLES 737
 
 /* Bring the DAC and DMA up and start streaming. Safe to call once. */
 void audio_init(void);

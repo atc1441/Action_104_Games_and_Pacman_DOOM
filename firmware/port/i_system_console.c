@@ -34,6 +34,7 @@
 #include "hostbox.h"
 #include "clock.h"
 #include "board.h"
+#include "audio.h"
 
 /* ------------------------------------------------------------------ *
  * Geometry
@@ -239,9 +240,9 @@ void I_ClearWindow_e32(void)     { lcd_fill(0x0000); }
  * but was unplayably slow. Now it only subtracts and compares, all in
  * 32 bits, and the while loop normally runs zero or one times.
  *
- * The counter is 32 bits wide and wraps after about 70 seconds at 61 MHz,
- * which is exactly why this accumulates instead of dividing the absolute
- * value.
+ * The counter is 32 bits wide and wraps after about 22 seconds at 194 MHz
+ * (about 70 seconds at 61 MHz), which is exactly why this accumulates
+ * instead of dividing the absolute value.
  * ------------------------------------------------------------------ */
 #define TICRATE_HZ 35u
 
@@ -261,6 +262,8 @@ void I_TimerInit_console(uint32_t core_hz)
 int I_GetTime_e32(void)
 {
     uint32_t now = DWT_CYCCNT;
+
+    audio_service();
 
     acc_cyc += (uint32_t)(now - last_cyc);   /* wrapping is correct here */
     last_cyc = now;

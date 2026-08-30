@@ -20,7 +20,7 @@
  */
 MEMORY
 {
-    FLASH (rx)  : ORIGIN = 0x08004000, LENGTH = 1M      /* to 0x08104000 */
+    FLASH (rx)  : ORIGIN = 0x08004000, LENGTH = 0x8C000 /* to 0x08090000 (WAD) */
     MBOX  (rw)  : ORIGIN = 0x20000000, LENGTH = 256
     RAM   (rwx) : ORIGIN = 0x20000100, LENGTH = 280K - 256
 }
@@ -36,6 +36,14 @@ SECTIONS
     .text       : { . = ALIGN(4); *(.text*) *(.rodata*) . = ALIGN(4); } > FLASH
     .data       : { . = ALIGN(4); _sdata = .; *(.data*) . = ALIGN(4); _edata = .; } > RAM AT > FLASH
     _sidata = LOADADDR(.data);
+    .ramfunc    : {
+        . = ALIGN(4);
+        _sramfunc = .;
+        *(.ramfunc*)
+        . = ALIGN(4);
+        _eramfunc = .;
+    } > RAM AT > FLASH
+    _siramfunc = LOADADDR(.ramfunc);
     .bss (NOLOAD) : { . = ALIGN(4); _sbss = .; *(.bss*) *(COMMON) . = ALIGN(4); _ebss = .; } > RAM
     _end = .;
     end = .;          /* newlib's _sbrk expects this symbol */

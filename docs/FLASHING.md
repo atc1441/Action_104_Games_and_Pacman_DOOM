@@ -5,6 +5,9 @@ this was developed with; anything that speaks SWD and can read and write
 memory will do, but the scripts here use [pylink](https://pypi.org/project/pylink-square/)
 and therefore a J-Link.
 
+For 194 MHz images, pass `--leave-halted` and power-cycle with the probe
+idle so SWD is not attached across the PLL source switch.
+
 ```sh
 pip install pylink-square
 ```
@@ -73,13 +76,16 @@ python flash.py id
 
 ## 2. Flash DOOM
 
+The image enables the 194 MHz PLL. Flash it **halted**, then power-cycle
+with the debugger disconnected:
+
 ```sh
-python flash.py write ../firmware/build/action104/doom.bin 0x08004000
-python flash.py write ../wad/doom1_e1m1.wad     0x08110000
+python flash.py write ../firmware/build/action104/doom.bin 0x08004000 --leave-halted
+python flash.py write ../wad/doom1_e1m1_sfx.wad            0x08090000 --leave-halted
 ```
 
-Both writes verify themselves. The console restarts into DOOM when
-`flash.py` exits.
+
+Unplug the probe, then power-cycle. Do not resume with SWD still attached.
 
 ### Flash layout
 
@@ -87,8 +93,8 @@ Both writes verify themselves. The console restarts into DOOM when
 |---|---|
 | `0x00000000` | Boot ROM, on-chip, 32 KB - not writable, not touched |
 | `0x08000000`-`0x08003FFF` | Bootloader in the SPI flash. Leave it alone: it is what jumps to `0x08004000`. |
-| `0x08004000`-`0x0808FFFF` | Application. DOOM goes here, ~525 KB. |
-| `0x08110000`-`0x083FFFFF` | WAD, read by pointer through the XIP window. |
+| `0x08004000`-`0x0808FFFF` | Application. DOOM goes here, ~545 KB. |
+| `0x08090000`-`0x083FFFFF` | WAD (E1M1 + `DS*` lumps), read by pointer through XIP. |
 
 Secure boot is not active - the bootloader validates nothing before
 jumping. That was verified by breakpointing it, not assumed.
@@ -128,6 +134,9 @@ Two failure modes worth knowing, because both look like dead hardware:
 * **Writing GPIO registers over SWD wedges the debug bus**, running core or
   halted, and needs a power cycle. Never configure pins from the host; have
   the firmware do it and read SRAM instead.
+* **Attaching SWD across the PLL source switch** (`RCC+0x1C` source = 3)
+  desyncs the MEM-AP. Power-cycle with the probe idle, then attach. This is
+  not a hung CPU - the console is usually running fine.
 
 Neither is recoverable by being clever with the debugger, and neither
 damages anything - a power cycle plus `rescue.py` always got the console

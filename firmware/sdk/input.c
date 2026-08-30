@@ -46,7 +46,60 @@ void input_init(void)
         pu |=  (1u << (pin * 2));      /* 01 = pull-up */
         GPIO_PUPDR(port) = pu;
     }
+
+#ifdef BOARD_HAS_VOL_BUTTON
+    {
+        static const input_pin_t vol_pins[] = {
+            { GPIOA_BASE,  0, 0 },   /* PA0  - stock volume up      */
+            { GPIOB_BASE,  2, 0 },   /* PB2  - stock volume down    */
+            { GPIOC_BASE, 13, 0 },   /* PC13 - stock ping-pong      */
+        };
+        for (unsigned i = 0; i < 3; i++) {
+            const uint32_t port = vol_pins[i].port;
+            const uint32_t pin  = vol_pins[i].pin;
+            gpio_mode(port, pin, GPIO_MODE_IN);
+            uint32_t pu = GPIO_PUPDR(port);
+            pu &= ~(3u << (pin * 2));
+            pu |=  (1u << (pin * 2));
+            GPIO_PUPDR(port) = pu;
+        }
+    }
+#endif
 }
+
+#ifdef BOARD_HAS_VOL_BUTTON
+/* Same 0..3 range as stock DAT_2000044c. Start loud so a first boot
+ * matches the mixer as it was before the button existed. */
+static unsigned vol_level = 3;
+static unsigned vol_armed = 1;
+static int      vol_dir   = 1;
+
+static int vol_button_down(void)
+{
+    return !(GPIO_IDR(GPIOA_BASE) & 1u)
+        || !(GPIO_IDR(GPIOB_BASE) & (1u << 2))
+        || !(GPIO_IDR(GPIOC_BASE) & (1u << 13));
+}
+
+static void vol_poll(void)
+{
+    const int down = vol_button_down();
+    if (!down) {
+        vol_armed = 1;
+        return;
+    }
+    if (!vol_armed) return;
+    vol_armed = 0;
+    /* Stock PC13 ping-pongs rather than wrapping loud -> mute. */
+    if (vol_dir > 0) {
+        if (vol_level < 3) vol_level++;
+        else { vol_dir = -1; vol_level--; }
+    } else {
+        if (vol_level > 0) vol_level--;
+        else { vol_dir = 1; vol_level++; }
+    }
+}
+#endif
 
 uint32_t input_read(void)
 {
@@ -59,6 +112,15 @@ uint32_t input_read(void)
         }
     }
     return keys;
+}
+
+unsigned input_volume(void)
+{
+#ifdef BOARD_HAS_VOL_BUTTON
+    return vol_level;
+#else
+    return 3;
+#endif
 }
 
 uint32_t input_raw(void)
@@ -95,6 +157,9 @@ void input_scan_init(void)
 
 void input_publish(void)
 {
+#ifdef BOARD_HAS_VOL_BUTTON
+    vol_poll();
+#endif
     g_hostbox.scan_a = GPIO_IDR(GPIOA_BASE);
     g_hostbox.scan_b = GPIO_IDR(GPIOB_BASE);
     g_hostbox.scan_c = GPIO_IDR(GPIOC_BASE);

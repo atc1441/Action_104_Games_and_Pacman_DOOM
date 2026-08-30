@@ -49,7 +49,7 @@ jobs:
           cp firmware/build/action104/doom.bin  "release/doom-action104-$VERSION.bin"
           cp firmware/build/pacman/doom.bin     "release/doom-pacman-$VERSION.bin"
           cp tools/flashwriter/build/writer.bin "release/flashwriter-$VERSION.bin"
-          cp wad/doom1_e1m1.wad                 release/
+          cp wad/doom1_e1m1_sfx.wad             release/
 
           # Sizes go into the release notes - a firmware that suddenly
           # grew or shrank by a lot is worth noticing before flashing it.
@@ -82,12 +82,13 @@ jobs:
             echo
             echo "Needs a SWD probe and \`pip install pylink-square\`."
             echo "**Dump your stock firmware first** - it is the only way back."
+            echo "194 MHz images: flash with \`--leave-halted\` and power-cycle with the probe idle."
             echo "See [docs/FLASHING.md](docs/FLASHING.md)."
             echo
             echo '```sh'
             echo "python tools/flash.py read stock_backup.bin 0x08000000 0x400000"
-            echo "python tools/flash.py write doom-action104-$VERSION.bin 0x08004000   # or doom-pacman-*"
-            echo "python tools/flash.py write doom1_e1m1.wad              0x08110000"
+            echo "python tools/flash.py write doom-action104-$VERSION.bin 0x08004000 --leave-halted  # or doom-pacman-*"
+            echo "python tools/flash.py write doom1_e1m1.wad              0x08110000 --leave-halted"
             echo '```'
             echo
             echo "\`flashwriter-$VERSION.bin\` is the RAM-resident writer that"
