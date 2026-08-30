@@ -28,18 +28,18 @@ void lcd_delay_ms(uint32_t ms)
 /*
  * One transfer of arbitrary length, CS stays low throughout.
  *
- * The order is exactly the bootloader's SPI routine (0x2B60): set the
- * length once, start, then push bytes while the TX FIFO has room. A first
- * version did this whole dance per byte and managed about 5 frames per
- * second.
+ * Short transfers (commands) use the bootloader SPI routine (0x2B60):
+ * set the length once, start, then push bytes while the TX FIFO has room.
+ * Pixel rows go through DMA channel 1 (stock FUN_08027464).
  */
 #define SR_TXFULL  (1u << 3)
 #define SR_TXDONE  (1u << 14)
 
-static void spi_write(const uint8_t *buf, uint32_t len)
-{
-    if (!len) return;
+/* Commands stay on the CPU; pixel rows (480/640 bytes) use DMA ch1. */
+#define SPI_DMA_MIN  16u
 
+static void spi_write_cpu(const uint8_t *buf, uint32_t len)
+{
     SPI_SR(SPI)   |= SR_TXDONE;
     SPI_SR(SPI)   |= 2u;
     SPI_CR0C(SPI) |= 2u;
@@ -58,6 +58,43 @@ static void spi_write(const uint8_t *buf, uint32_t len)
     SPI_SR(SPI)   |= 2u;
     SPI_CR0C(SPI) &= ~1u;
     SPI_CR24(SPI) &= ~1u;
+}
+
+/*
+ * Stock FUN_08027464 (program) + FUN_08027510 (wait / tear down).
+ * Channel 1 only: NEXT=0 one-shot, 8-bit SPI. Never write channel 0.
+ */
+static void spi_write_dma(const uint8_t *buf, uint32_t len)
+{
+    SPI_SR(SPI) = (SPI_SR(SPI) & ~2u) | SR_TXDONE;
+
+    DMA_CH_NEXT(1) = 0;
+    DMA_CH_SRC(1)  = (uint32_t)(uintptr_t)buf;
+    DMA_CH_DST(1)  = SPI_LCD_BASE;
+    DMA_CH_CTRL(1) = DMA_CH1_CTRL_HI | len;
+    DMA_CH_CFG(1)  = DMA_CH1_CFG;
+
+    SPI_CR20(SPI)  = len;
+    SPI_CR0C(SPI)  = (SPI_CR0C(SPI) & 0xfffffff6u) | 0x1du;
+    SPI_CR24(SPI) |= 1u;
+    DMA_GLOBAL_EN |= 1u;
+
+    while (!(SPI_SR(SPI) & SR_TXDONE)) { }
+
+    SPI_SR(SPI)   |= 0x4002u;
+    SPI_CR0C(SPI) &= ~8u;
+    SPI_CR24(SPI) &= ~1u;
+}
+
+static void spi_write(const uint8_t *buf, uint32_t len)
+{
+    if (!len) return;
+
+    if (len > SPI_DMA_MIN) {
+        spi_write_dma(buf, len);
+    } else {
+        spi_write_cpu(buf, len);
+    }
 }
 
 void lcd_cmd(uint8_t c)
@@ -112,6 +149,9 @@ void lcd_gpio_init(void)
     RCC_EN0 |= RCC_EN0_LCDSPI;
     RCC_EN1 |= RCC_EN1_GPIOA;
     RCC_EN2 |= RCC_EN2_LCDMISC;
+    /* DMA channel 1 feeds SPI; lcd_fill() runs before audio_init(). */
+    RCC_EN0 |= RCC_EN0_DMA;
+    RCC_EN2 |= RCC_EN2_DMA;
 
     /* DC and CS as outputs, SCK and MOSI as alternate function */
     uint32_t m = GPIO_MODER(LCD_PORT);

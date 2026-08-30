@@ -62,7 +62,33 @@ not.**
 | GPIOA / GPIOB / GPIOC | `0x48000000` / `0x48000400` / `0x48000800` |
 | SPI (LCD) | `0x40030000` |
 | MPI / SPI (flash) | `0x52005000` - do not touch, XIP runs through it |
-| USART1 / USART2 | `0x40013800` / `0x40004400` |
+| USART1 / USART2 | `0x40013800` / `0x40004400` - case UART is USART2 |
+
+### UART
+
+The boot ROM logs over **USART2** (`0x40004400`) at **115200 8N1**. Handle
+setup is `FUN_00002e5c`; byte send is `FUN_00002d64`. Pins are **PB0 and
+PB1**, AF 1 (`FUN_00002c94`). RCC `+0x34` bit 17 clocks the block.
+
+Register layout (not STM32 USART):
+
+| Offset | Role |
+|---|---|
+| `+0x00` | data (write a byte) |
+| `+0x04` | status: bit 5 TX full, bit 9 TX busy |
+| `+0x08` | baud (integer bits 21:6, 6-bit fraction) |
+| `+0x14` | control: bit 0 enable, `0x300` TX+RX |
+| `+0x1C` | `0xE0` = 8N1 plus bit 5 |
+
+USART1 sits at `0x40013800` with PA9/PA10 in the boot ROM. The case
+exposes one UART; USART2 is what the boot ROM used, USART1 is the other
+candidate (and does not steal KEY_A on PB0). The stock **application**
+printf putchar is `bx lr`, so strings like `AudioVolume:%d` never left
+the chip. `firmware/sdk/uart.c` brings up **both** at 115200 and writes
+each byte to both; `lprintf` / `printf` go through `_write`.
+
+PB0 is also KEY_A. `uart_init()` runs after `input_init()` and puts that
+pin back into AF for USART2.
 
 ### GPIO
 
@@ -296,9 +322,13 @@ Global `+0x14` bit 0 is "channel done" and `+0x08` acknowledges it. The
 stock mixer waits on that bit; a self-looping descriptor also lets the
 channel keep running if the bit is a pulse the poller can miss.
 
-Channel 1 is worth remembering independently of audio: the display can be
-driven by DMA rather than the byte-pushing loop in `lcd.c`, which is where
-the frame rate currently goes.
+Channel 1 drives the LCD SPI data register. Stock `FUN_08027464` programs
+a one-shot (NEXT = 0, not the audio self-loop): SRC = line buffer, DST =
+`0x40030000`, CTRL = `0x04120000 | byte_length`, CFG = `0x00010003`, then
+SPI `+0x20` = length, `+0x0C` bits `0x1d`, start `+0x24` bit 0, and
+`DMA_GLOBAL_EN |= 1`. Wait is SPI SR bit 14 (`FUN_08027510`); it does not
+touch channel 0. `lcd.c` `spi_write()` uses this for transfers above 16
+bytes. Audio channel 0 is unchanged.
 
 ### How the stock firmware plays sound
 

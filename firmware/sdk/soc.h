@@ -52,7 +52,12 @@
 
 #define RCC_EN0_LCDSPI  (1u << 10)   /* 0x400 - SPI controller 0x40030000  */
 #define RCC_EN1_GPIOA   (1u << 0)    /* 0x001 - GPIOA                      */
-#define RCC_EN2_LCDMISC (1u << 4)    /* 0x010 - purpose still unknown      */
+#define RCC_EN1_GPIOB   (1u << 1)    /* 0x002 - GPIOB (boot ROM USART2)    */
+#define RCC_EN2_LCDMISC (1u << 4)    /* 0x010 - also set around USART2     */
+#define RCC_EN0_DMA     0x00000003u  /* bits 0-1; DMA clock (with audio)   */
+#define RCC_EN2_DMA     (1u << 9)    /* 0x200 - DMA (observed live)        */
+#define RCC_APB1ENR     REG32(RCC_BASE + 0x34)
+#define RCC_USART2EN    (1u << 17)   /* boot ROM FUN_00002c94              */
 
 /* ------------------------------------------------------------------ *
  * GPIO                                                       [V]/[A]
@@ -166,14 +171,15 @@ static inline void gpio_mode(uint32_t port, uint32_t pin, uint32_t mode)
 /* ------------------------------------------------------------------ *
  * DMA                                                        [V]
  *
- * Channels are 0x40 apart starting at 0x40031100. Two are in use by the
- * stock firmware:
- *   channel 0  ->  AUDIO_DATA
- *   channel 1  ->  the LCD SPI data register (0x40030000)
+ * Channels are 0x40 apart starting at 0x40031100. Two are in use:
+ *   channel 0  ->  AUDIO_DATA (self-loop, CTRL high 0x8540, CFG 0x000A0083)
+ *   channel 1  ->  LCD SPI data 0x40030000 (one-shot, lcd.c spi_write_dma)
  *
- * That second one is worth remembering: the display could be driven by
- * DMA instead of the byte-pushing loop in lcd.c, which is where the frame
- * rate is currently going.
+ * Channel 1 live values from stock FUN_08027464 (NES lines were 512 bytes;
+ * DOOM rows are 480, fill rows 640). Do not copy the audio descriptor:
+ *   NEXT = 0
+ *   CTRL = 0x04120000 | byte_length
+ *   CFG  = 0x00010003
  *
  * Live values for the audio channel: SRC advancing through the buffer,
  * DST = 0x40012C34, +0x0C = 0x854002CA (the low half counts down, so it
@@ -192,13 +198,35 @@ static inline void gpio_mode(uint32_t port, uint32_t pin, uint32_t mode)
 #define DMA_CH_CTRL(n) REG32(DMA_CH(n) + 0x0C)
 #define DMA_CH_CFG(n)  REG32(DMA_CH(n) + 0x10)  /* bit0 = enable */
 
+#define DMA_CH1_CTRL_HI  0x04120000u   /* LCD SPI 8-bit one-shot, FUN_08027464 */
+#define DMA_CH1_CFG      0x00010003u   /* ch1 enable; not the audio 0x000A0083 */
+
 /* ------------------------------------------------------------------ *
  * UART                                                       [V]
- * The bootloader logs over USART2, the application over USART1.
- * Register layout not reconstructed.
+ *
+ * Boot ROM logs over USART2 at 115200 8N1 (FUN_00002e5c / FUN_00002d64).
+ * The case exposes that one UART. USART1 (PA9/PA10, AF 1) exists but is
+ * not brought out. The stock *application* printf putchar is `bx lr`, so
+ * FlyThings strings never actually left the chip; only the boot ROM did.
+ *
+ * Layout from boot ROM + HAL_UART_Transmit (app FUN_08005708):
+ *   +0x00  TDR (write a byte)
+ *   +0x04  SR  bit 5 = TX full (wait while set), bit 9 = TX busy
+ *   +0x08  baud (integer in bits 21:6, 6-bit fraction in 5:0)
+ *   +0x14  CR  bit 0 = enable, 0x300 = TX+RX (FUN_00002c60)
+ *   +0x1C  0xE0 = 8N1 | 0x20
+ *
+ * Pins: GPIOB 0/1, AF 1 (boot ROM FUN_00002c94). PB0 is also KEY_A.
  * ------------------------------------------------------------------ */
 #define USART1_BASE  0x40013800u
 #define USART2_BASE  0x40004400u
+#define USART_TDR(b)   REG32((b) + 0x00)
+#define USART_SR(b)    REG32((b) + 0x04)
+#define USART_BRR(b)   REG32((b) + 0x08)
+#define USART_CR(b)    REG32((b) + 0x14)
+#define USART_CR1C(b)  REG32((b) + 0x1C)
+#define USART_SR_TXFULL  (1u << 5)
+#define USART_SR_TXBUSY  (1u << 9)
 
 /* ------------------------------------------------------------------ *
  * Cortex-M system registers
