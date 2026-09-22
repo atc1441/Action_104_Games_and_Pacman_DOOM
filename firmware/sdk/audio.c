@@ -29,15 +29,14 @@
 #define DAC_R10_VAL   0x00000003u
 #define DAC_R14_VAL   0x00000000u
 #define DAC_R18_VAL   0x00000068u
-#define DAC_R24_VAL   0x00000089u
 #define DAC_R28_VAL   0x00000010u
 #define DAC_R2C_VAL   0x000000FFu
 #define DAC_R44_BIT   0x00008000u
 
 /*
- * DMA channel 0. The control word's low half is the transfer count - it
- * was seen counting down - so the upper half is the actual configuration
- * and the count goes in fresh on every restart.
+ * DMA channel 0. The control word's low half is the remaining transfer
+ * count (counts down while playing). Reload value from the stock
+ * descriptor while Forest Kid was playing: 0x854002E1.
  */
 #define DMA_CTRL_HI   0x85400000u
 #define DMA_CFG_VAL   0x000A0083u
@@ -48,33 +47,67 @@
 static uint16_t buf[2][AUDIO_BUF_SAMPLES];
 
 /*
- * The channel's +0x08 points at a word holding the source address for the
- * next run. The controller consumes it - after one reload it read back as
- * zero and the channel stopped - so it has to be re-armed every time.
+ * Live Forest Kid (stock, playing): DMA ch0 +0x08 stayed at 0x20044BA0,
+ * an 8-word self-looping descriptor:
  *
- * A circular chain of two descriptors was tried instead, on the theory
- * that +0x08 walks a scatter-gather list whose fields mirror the channel
- * registers. The channel then transferred a couple of hundred samples and
- * stalled, so that layout is wrong. Re-arming from software costs one
- * store per buffer and is known to work.
+ *   +0x00 SRC   ping-pong base (firmware patches this)
+ *   +0x04 DST   0x40012C34
+ *   +0x08 NEXT  0x20044BA0 (self)
+ *   +0x0C CTRL  0x854002E1
+ *   +0x10       0x40012C00
+ *   +0x14       0x10
+ *   +0x18       0xFF
+ *   +0x1C       1
+ *
+ * Earlier we pointed +0x08 at a single next-SRC word; the controller
+ * consumed it and stopped. A 4-word chain also stalled. The missing
+ * words are what the hardware reloads.
  */
-static volatile uint32_t dma_next;
+typedef struct {
+    volatile uint32_t src;
+    volatile uint32_t dst;
+    volatile uint32_t next;
+    volatile uint32_t ctrl;
+    volatile uint32_t dac_base;
+    volatile uint32_t w14;
+    volatile uint32_t w18;
+    volatile uint32_t w1c;
+} dma_desc_t;
+
+static dma_desc_t desc __attribute__((aligned(32)));
 static unsigned playing;          /* index of the buffer the DMA is on */
 static uint32_t blocks;
 static int      running;
 
 uint32_t audio_blocks(void) { return blocks; }
 
-static void dma_arm(unsigned play, unsigned nxt)
+static void desc_set_src(unsigned idx)
 {
-    dma_next = (uint32_t)(uintptr_t)buf[nxt];
+    desc.src = (uint32_t)(uintptr_t)buf[idx];
+}
 
-    DMA_CH_CFG(0)  = DMA_CFG_VAL & ~1u;          /* stop the channel */
+/* Stock FUN_0803f080: channel SRC = buffer A, descriptor SRC = buffer B,
+ * NEXT = &descriptor (self). The extra four words are what sat after the
+ * 4-word SG fields in RAM while Forest Kid played; DMA reloads them. */
+static void dma_start(unsigned play)
+{
+    const unsigned nxt = play ^ 1u;
+
+    desc.src      = (uint32_t)(uintptr_t)buf[nxt];
+    desc.dst      = (uint32_t)(uintptr_t)&AUDIO_DATA;
+    desc.next     = (uint32_t)(uintptr_t)&desc;
+    desc.ctrl     = DMA_CTRL_HI | AUDIO_BUF_SAMPLES;
+    desc.dac_base = AUDIO_BASE;
+    desc.w14      = DAC_R28_VAL;
+    desc.w18      = DAC_R2C_VAL;
+    desc.w1c      = 1;
+
+    DMA_CH_CFG(0)  = DMA_CFG_VAL & ~1u;
     DMA_CH_SRC(0)  = (uint32_t)(uintptr_t)buf[play];
-    DMA_CH_DST(0)  = (uint32_t)(uintptr_t)&AUDIO_DATA;
-    DMA_CH_NEXT(0) = (uint32_t)(uintptr_t)&dma_next;
-    DMA_CH_CTRL(0) = DMA_CTRL_HI | AUDIO_BUF_SAMPLES;
-    DMA_CH_CFG(0)  = DMA_CFG_VAL | 1u;           /* go */
+    DMA_CH_DST(0)  = desc.dst;
+    DMA_CH_NEXT(0) = desc.next;
+    DMA_CH_CTRL(0) = desc.ctrl;
+    DMA_CH_CFG(0)  = DMA_CFG_VAL | 1u;
 }
 
 void audio_init(void)
@@ -112,7 +145,8 @@ void audio_init(void)
     REG32(AUDIO_BASE + 0x10) = DAC_R10_VAL;
     REG32(AUDIO_BASE + 0x14) = DAC_R14_VAL;
     REG32(AUDIO_BASE + 0x18) = DAC_R18_VAL;
-    REG32(AUDIO_BASE + 0x24) = DAC_R24_VAL;
+    /* +0x24 is a live hardware counter while playing (Forest Kid: it
+     * kept changing with the CPU halted). Do not treat 0x89 as config. */
     REG32(AUDIO_BASE + 0x28) = DAC_R28_VAL;
     REG32(AUDIO_BASE + 0x2C) = DAC_R2C_VAL;
     AUDIO_DATA = 0;
@@ -161,7 +195,7 @@ void audio_init(void)
     DMA_GLOBAL_1C = 1;          /* also 1 in the stock firmware */
 
     playing = 0;
-    dma_arm(0, 1);
+    dma_start(0);
 
     AUDIO_CR44 |= DAC_R44_BIT;
     AUDIO_CR0   = DAC_R00_VAL;
@@ -190,23 +224,30 @@ void audio_service(void)
 {
     if (!running) return;
 
-    const uint32_t src = DMA_CH_SRC(0);
-    const unsigned cur = (src >= (uint32_t)(uintptr_t)buf[1]) ? 1u : 0u;
+    const uint32_t remain = DMA_CH_CTRL(0) & 0xFFFFu;
+    const uint32_t cfg    = DMA_CH_CFG(0);
+    const uint32_t src    = DMA_CH_SRC(0);
+    const unsigned cur    = (src >= (uint32_t)(uintptr_t)buf[1]) ? 1u : 0u;
 
-    if (cur == playing) return;          /* still on the same buffer */
+    /* Hardware reloads from the self-loop descriptor. Patch SRC to the
+     * idle buffer once DMA has moved onto the other one, matching stock
+     * which rewrites 0x20044BA0 while NEXT stays a self-pointer. */
+    if ((cfg & 1u) && remain != 0) {
+        if (cur == playing) return;
+        playing = cur;
+        blocks++;
+        const unsigned idle = cur ^ 1u;
+        audio_fill(buf[idle], AUDIO_BUF_SAMPLES);
+        desc_set_src(idle);
+        DMA_IRQ_CLR = DMA_DONE_CH0;
+        return;
+    }
 
-    playing = cur;
+    /* Transfer count hit zero and was not reloaded. Restart. */
+    const unsigned nxt = playing ^ 1u;
+    playing = nxt;
     blocks++;
-
-    const unsigned idle = cur ^ 1u;
-
-    /* Re-arm: the controller consumed the pointer when it reloaded. */
-    dma_next = (uint32_t)(uintptr_t)buf[idle];
-    DMA_CH_NEXT(0) = (uint32_t)(uintptr_t)&dma_next;
-
-    /* Clear the completion flag if the controller does raise it - costs
-     * nothing and keeps the block from latching something stale. */
     DMA_IRQ_CLR = DMA_DONE_CH0;
-
-    audio_fill(buf[idle], AUDIO_BUF_SAMPLES);
+    audio_fill(buf[nxt ^ 1u], AUDIO_BUF_SAMPLES);
+    dma_start(nxt);
 }

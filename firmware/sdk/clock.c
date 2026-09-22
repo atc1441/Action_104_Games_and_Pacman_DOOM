@@ -53,6 +53,8 @@ uint32_t g_cpu_hz = 16000000u;
 #define DSB() __asm volatile ("dsb sy" ::: "memory")
 #define ISB() __asm volatile ("isb sy" ::: "memory")
 
+#define RAMFUNC __attribute__((section(".ramfunc"), noinline, noclone))
+
 /* The stock code simply counts down from 3 here. */
 static inline void short_delay(void)
 {
@@ -94,9 +96,8 @@ void clock_init(void)
 
     g_cpu_hz = CPU_HZ_BASE;
 
-    /* --- optional: step up to the PLL ---
-     * Off by default and for a good reason; read clock_boost() below
-     * before switching it on. */
+    /* --- step up to the PLL. Sequence matches stock app_board_init;
+     * boot with the probe disconnected across the source switch. */
 #ifdef ENABLE_CLOCK_BOOST
     if (clock_boost() == 0) {
         g_cpu_hz = CPU_HZ_PLL;
@@ -126,31 +127,16 @@ void clock_init(void)
  * On this device: Fref = 15,525,065 Hz, +0x4C = 0x326 (M=38, P=3, Q=0)
  *   => 15,525,065 * 50 / 4 = 194.06 MHz
  *
- * ===================== WHY THIS IS OFF BY DEFAULT ====================
+ * ===================== CLOCK BOOST (stock app_board_init) ====================
  *
- * The register sequence below is complete and correct - it was read
- * straight out of app_board_init (0x0802AD96 ff.) of the stock firmware.
- * It still hangs the SoC, and the reason is not the sequence:
- *
- * This code executes via XIP from the external SPI flash. The moment the
- * core clock jumps, the flash interface timing no longer holds, and the
- * very next instruction fetch fails. The symptom is distinctive: current
- * draw rises from 61 mA to 124 mA, the display stays dark, and the debug
- * port is gone. The PLL is running fine - the core simply cannot read
- * another instruction.
- *
- * The stock firmware avoids this the only way that works: before touching
- * the flash controller it copies a small routine into RAM (0x0802AA70 -
- * the stored constants 0xF8413A01 / 0xD1F90F04 are Thumb code, not data)
- * and calls it with interrupts disabled.
- *
- * To finish this: put clock_boost() into a .ramfunc section, copy it to
- * RAM at startup, call it with interrupts masked, and adjust the MPI
- * divider along with the core clock. Until then the console runs at
- * ~62 MHz, which is enough for DOOM at a playable frame rate.
- *
- * If you enable it anyway and the console stops responding, see
- * docs/FLASHING.md - tools/rescue.py gets it back.
+ * clock_boost() matches stock app_board_init (0x0802AA70 / 0x0802AD96):
+ * a .ramfunc ORs 0x100 into MPI +0x10 (and keeps divider 2), then the
+ * rest runs from flash — the same split as stock. OSC bit 3 is set again
+ * before lock (SystemInit cleared it for 61 MHz). After source=3, R20
+ * bits[3:0] and [7:4] are cleared with a ready wait each, then bits[13:8]
+ * are set to 0x24 (live stock R20 = 0x80002400). Do not attach SWD across
+ * the source switch; it desyncs MEM-AP. Flash with --leave-halted and
+ * power-cycle. If the console stops responding, see docs/FLASHING.md.
  */
 #define R48_PLL_ON    (1u << 0)
 #define R48_BIT21     (1u << 21)
@@ -160,56 +146,98 @@ void clock_init(void)
 
 #define SRC_PLL       3u
 #define PLLCFG_194MHZ 0x326u          /* M=38, P=3, Q=0 */
+#define DBG_C4        REG32(0x400070C4u)  /* stock bic #0x100000 after PLL */
 
 /* Progress markers, survive a warm reset - without them there is no way
  * to tell "PLL never locked" from "the switch killed it". */
 #define MARK  g_hostbox.mark
 #define MARKV g_hostbox.markv
 
+RAMFUNC static void mpi_retune_for_pll(void)
+{
+    /* Stock stub at 0x20000000: OR 0x100 into +0x10. Must not run from XIP. */
+    uint32_t div = SPI_FLASH_DIV;
+    SPI_FLASH_DIV = (div & 0xFFFF0000u) | 2u;
+    SPI_FLASH_RXCTL |= 0x100u;
+    DSB();
+}
+
+static int wait_r20_ready(void)
+{
+    for (uint32_t t = 2000000u; t; t--) {
+        if (RCC_R20 & R20_READY) {
+            return 0;
+        }
+    }
+    return -1;
+}
+
 int clock_boost(void)
 {
     MARK = 1; MARKV = RCC_R48;
 
+    /* MPI first, while still at 61 MHz, matching stock's RAM stub then PLL. */
+    __asm volatile ("cpsid i" ::: "memory");
+    mpi_retune_for_pll();
+
+    /* Stock app_board_init: (OSC & ~8) | 9, wait bit 4. SystemInit cleared
+     * bit 3 for the 61 MHz switch; PLL lock is gated on (OSC & 0x19)==0x19. */
+    MARK = 2;
+    RCC_OSC = (RCC_OSC & ~OSC_BIT3) | OSC_ON | OSC_BIT3;
+    short_delay();
+    for (uint32_t t = 2000000u; !(RCC_OSC & OSC_READY); t--) {
+        if (!t) { MARK = 0x80; MARKV = RCC_OSC; __asm volatile ("cpsie i" ::: "memory"); return -1; }
+    }
+
     /* reference on */
     RCC_R48 |= R48_PLL_ON;
     RCC_R48 &= ~R48_BIT21;
-    MARK = 2; MARKV = RCC_R48;
+    MARK = 3; MARKV = RCC_R48;
     short_delay();
 
     /* first lock - still only the reference, not the PLL */
-    MARK = 3;
+    MARK = 4;
     for (uint32_t t = 2000000u; !(RCC_R48 & R48_LOCK30); t--) {
-        if (!t) { MARK = 0x81; MARKV = RCC_R48; return -1; }
+        if (!t) { MARK = 0x81; MARKV = RCC_R48; __asm volatile ("cpsie i" ::: "memory"); return -2; }
     }
 
     /* Set the dividers and only NOW switch the PLL itself on. These two
      * steps were missing from earlier attempts, which switched the clock
      * source to a PLL that had never been enabled. */
-    MARK = 4;
+    MARK = 5;
     RCC_R48 &= ~R48_BIT1;
     RCC_PLLCFG = PLLCFG_194MHZ;
     RCC_R48 |= R48_PLL_EN;
-    MARK = 5; MARKV = RCC_R48;
+    MARK = 6; MARKV = RCC_R48;
     short_delay();
 
     /* second lock - now the PLL */
-    MARK = 6;
+    MARK = 7;
     for (uint32_t t = 2000000u; !(RCC_R48 & R48_LOCK30); t--) {
-        if (!t) { MARK = 0x82; MARKV = RCC_R48; return -2; }
+        if (!t) { MARK = 0x82; MARKV = RCC_R48; __asm volatile ("cpsie i" ::: "memory"); return -3; }
     }
 
     /* Sanity check as in the original - which bits apply depends on bit 1. */
     const uint32_t r48  = RCC_R48;
     const uint32_t mask = (r48 & R48_BIT1) ? 0x20200001u : 0x40200001u;
     const uint32_t want = (r48 & R48_BIT1) ? 0x20000001u : 0x40000001u;
-    MARK = 7; MARKV = r48;
-    if ((r48 & mask) != want) { MARK = 0x83; return -3; }
+    MARKV = r48;
+    if ((r48 & mask) != want) { MARK = 0x83; __asm volatile ("cpsie i" ::: "memory"); return -4; }
 
-    /* only now switch the source */
     MARK = 8;
     RCC_R1C = (RCC_R1C & ~7u) | SRC_PLL;
-    RCC_R20 &= ~0xFu;                       /* post-divider to 1 */
+    RCC_R20 &= ~0xFu;
+    if (wait_r20_ready()) { MARK = 0x84; MARKV = RCC_R20; __asm volatile ("cpsie i" ::: "memory"); return -5; }
+    RCC_R20 &= ~0xF0u;
+    if (wait_r20_ready()) { MARK = 0x85; MARKV = RCC_R20; __asm volatile ("cpsie i" ::: "memory"); return -6; }
+    /* Stock 0x0802B186: BFI #0x24, lsb=8, width=6 */
+    RCC_R20 = (RCC_R20 & ~0x3F00u) | 0x2400u;
+    DBG_C4 &= ~0x100000u;
+    DSB(); ISB();
+    SCB_ICIALLU = 0;
+    DSB(); ISB();
     short_delay();
+    __asm volatile ("cpsie i" ::: "memory");
     MARK = 9; MARKV = RCC_R48;
     return 0;
 }

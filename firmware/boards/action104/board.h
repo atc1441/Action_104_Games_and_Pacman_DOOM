@@ -139,8 +139,10 @@ static const lcd_cmd_t board_lcd_init_seq[] = {
  * Not game buttons:
  *   PB3   - bit 2 ("Select" in the NES byte) is not populated on this
  *           board; it never moved under any press. MENU takes that role.
- *   PA0, PB2, PC13 - three-position volume slider, handled by a separate
- *           RAM-resident routine that prints "AudioVolume:%d".
+ *   PA0, PB2, PC13 - stock FUN_0803ec10 watches all three for volume
+ *           (PA0 up, PB2 down, PC13 ping-pongs 0..3 and prints
+ *           "AudioVolume:%d"). The case only exposes one volume button;
+ *           unused pins stay high via pull-up. Not a game key.
  *
  * The two turbo buttons (PC6, PA12) are OR'ed onto A and B by the stock
  * firmware. Here they get keys of their own: DOOM has better uses for two
@@ -161,5 +163,8 @@ static const lcd_cmd_t board_lcd_init_seq[] = {
     {  { GPIOB_BASE,  6,  "PB6"  }, KEY_LEFT    },  /* d-pad left              */ \
     {  { GPIOB_BASE,  4,  "PB4"  }, KEY_RIGHT   },  /* d-pad right             */ \
     {  { GPIOC_BASE,  7,  "PC7"  }, KEY_SELECT  },  /* MENU                    */
+
+/* Volume button. Stock polls these three; one is wired, the rest idle. */
+#define BOARD_HAS_VOL_BUTTON 1
 
 #endif /* BOARD_H */

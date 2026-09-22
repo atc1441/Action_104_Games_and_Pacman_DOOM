@@ -13,10 +13,10 @@
 
 /*
  * A full megabyte is reserved for the firmware even though the image is
- * about 525 KB, so there is room to grow without moving the WAD.
+ * about 545 KB, so there is room to grow without moving the WAD.
  */
-#define WAD_BASE  0x08110000u     /* just past the 1 MB firmware area */
-#define WAD_MAX   0x002F0000u     /* rest of the 4 MB flash, ~3.0 MB  */
+#define WAD_BASE  0x08090000u     /* after firmware; room for DS* lumps  */
+#define WAD_MAX   0x00370000u     /* rest of the 4 MB flash              */
 
 const unsigned char *const doom_iwad = (const unsigned char *)WAD_BASE;
 const unsigned int doom_iwad_len = WAD_MAX;

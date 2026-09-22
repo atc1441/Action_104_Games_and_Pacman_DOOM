@@ -43,6 +43,11 @@ void     input_init(void);
 /* Bit mask of logical keys (KEY_*), active-low already resolved. */
 uint32_t input_read(void);
 
+/* Hardware volume: 0 = mute .. 3 = loud. The 104-games board has one
+ * button that ping-pongs through those levels, same as stock. Pac-Man's
+ * VOL+/VOL- are START/SELECT, so it always returns 3. */
+unsigned input_volume(void);
+
 /* Raw mask: bit i = pin i of input_pins[] is pressed. For measurements. */
 uint32_t input_raw(void);
 

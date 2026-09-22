@@ -27,7 +27,7 @@ reconstructed from the two stock firmwares and verified on the devices.
 | Shop | [article 3217060](https://www.action.com/de-de/p/3217060/mini-spielkonsole/) | [article 3219232](https://www.action.com/de-de/p/3219232/pac-man-minikonsole/) |
 | Price | EUR 5.95 | EUR 12.95 |
 | Board | `GC83-250107-V3` | `GC86-0617-V1` |
-| Buttons | 11 - d-pad, four on the right, MENU, START, volume slider | 8 - d-pad, A, B, VOL+, VOL- |
+| Buttons | 11 - d-pad, four on the right, MENU, START, volume button | 8 - d-pad, A, B, VOL+, VOL- |
 | Stock firmware | FlyThings/ZKSWE with an NES emulator | licensed Bandai Namco arcade emulator, C++ |
 | Panel | 320x240, landscape in the case | 320x240, turned 90 degrees in the case |
 | Build | `make` | `make BOARD=pacman` |
@@ -47,31 +47,28 @@ reconstructed from the two stock firmwares and verified on the devices.
 On **both** consoles:
 
 * DOOM (shareware E1M1) at a playable frame rate
-* Every button - eleven on the 104 Games, eight on the Pac-Man
+* **~194 MHz PLL**, matching stock. MPI retune runs from RAM; flash the
+  image with the probe leaving the core halted and power-cycle with SWD
+  idle so the debugger is not attached across the clock source switch
+* **Sound effects** through the DAC at `0x40012C00`, DMA channel 0, mixer
+  in `firmware/port/i_sound_console.c`. Menu blips and in-game SFX are
+  confirmed. The WAD at `0x08090000` includes the `DS*` lumps
+* Every button - eleven on the 104 Games, eight on the Pac-Man. On the
+  104 Games the **volume button** ping-pongs four software gains (loud /
+  mid / quiet / mute), as the stock firmware did. Pac-Man's VOL+/VOL-
+  stay START and SELECT
 * Correct colours and orientation from a cold start, with no dependency on
   what the stock firmware left behind
 * Flashing and full recovery over SWD, no soldering beyond the debug wires
 
 ## What does not
 
-Both consoles share these, since they share the SoC:
-
-* **No sound.** The hardware is fully mapped and a driver plus mixer exist
-  in the tree (unbuilt): a DAC at `0x40012C00` fed by DMA. It gets as far
-  as producing an audible tone, but the DMA reload only restores the
-  source address and not the transfer count, so playback stops after one
-  buffer. See [docs/HARDWARE.md](docs/HARDWARE.md#audio) for exactly where
-  it stands and what to try next.
-* **~62 MHz instead of 194 MHz.** The PLL sequence is fully reverse
-  engineered and present in the code, but it hangs the SoC: this firmware
-  executes via XIP from the external flash, and when the clock jumps the
-  flash interface timing no longer holds, so the next instruction fetch
-  fails. It needs to run from RAM. See the long comment in
-  [`firmware/sdk/clock.c`](firmware/sdk/clock.c).
+* **No music.** DOOM's MUS lumps would need a synth; that is left out on
+  purpose. Effects only.
 * **The screen wipe looks wrong.** Front and back buffer share memory to
   save 38 KB.
-* Only one map fits alongside the firmware in 4 MB, so the WAD here is
-  trimmed to E1M1.
+* Only one map fits alongside the firmware and the sound lumps in 4 MB, so
+  the WAD here is trimmed to E1M1.
 
 ---
 
@@ -88,7 +85,7 @@ both boards.*
 | RAM | 280 KB SRAM at `0x20000000` (measured - a read at `0x20046000` resets the chip) |
 | Flash | Zbit ZB25VQ32, 4 MB, W25Q command compatible, memory-mapped at `0x08000000` |
 | Boot ROM | 32 KB on-chip, **byte-identical on both consoles** - same mask ROM |
-| Clock | 16 MHz from the bootloader, ~62 MHz after our init |
+| Clock | 16 MHz from the bootloader, ~62 MHz after SystemInit, **~194 MHz** after `clock_boost()` |
 | Power | 3x AAA |
 
 The peripheral base addresses look exactly like an STM32L4 (RCC at
@@ -123,7 +120,7 @@ every one while watching the input registers:
 | D-pad left | PB6 | right 3 | PA11 |
 | D-pad right | PB4 | right 4 (bottom) | PB0 |
 | START | PC8 | MENU | PC7 |
-| VOL | PA0 / PB2 / PC13 (3-position slider) | | |
+| Volume button | PA0 / PB2 / PC13 (stock polls all three; one is wired) | | |
 
 The bit order the stock firmware builds is an NES joypad byte, which fits
 an NES emulator exactly. The two turbo buttons are OR'ed onto A and B
@@ -154,9 +151,9 @@ wholesale.
 
 The wiring turned out to be identical to the 104 Games board - the same
 pins carry the d-pad, A and B. This console simply populates fewer of them,
-and its two volume buttons sit on pins the other one used for its volume
-slider. VOL+ and VOL- become START and SELECT because DOOM needs those and
-there is nothing else left; there is no strafe key here.
+and its VOL+/VOL- sit on pins the other board uses for volume. VOL+ and
+VOL- become START and SELECT because DOOM needs those and there is nothing
+else left; there is no strafe key here.
 
 ### Two things that cost time, in case they help elsewhere
 
@@ -221,6 +218,7 @@ are the pair marked in the photo in [docs/FLASHING.md](docs/FLASHING.md).
 ```sh
 cd tools/flashwriter && make && cd ..
 python flash.py read stock_backup.bin 0x08000000 0x400000
+# or: python flash_openocd.py read stock_backup.bin 0x08000000 0x400000
 ```
 
 Do not skip this. It is the only way back to the original console, and this
@@ -228,12 +226,19 @@ repository would not exist without those two dumps.
 
 ### 3. Write DOOM and the WAD
 
+The image runs the PLL. **Do not leave SWD attached across that switch**
+(it desyncs the MEM-AP). Flash with `--leave-halted` and power-cycle with
+the probe idle:
+
 ```sh
-python flash.py write ../firmware/build/action104/doom.bin 0x08004000
-python flash.py write ../wad/doom1_e1m1.wad                0x08110000
+python flash.py write ../firmware/build/action104/doom.bin 0x08004000 --leave-halted
+python flash.py write ../wad/doom1_e1m1_sfx.wad            0x08090000 --leave-halted
+# CMSIS-DAP / OpenOCD: flash_openocd.py, same arguments
 ```
 
-Use `build/pacman/doom.bin` for the other console; the WAD is the same.
+J-Link (`flash.py`) and OpenOCD (`flash_openocd.py`) share the RAM writer
+and the `--leave-halted` flag. Use `build/pacman/doom.bin` for the other
+console; the WAD is the same.
 
 The bootloader at `0x00000000` is untouched and keeps working - it is what
 jumps to `0x08004000`. Secure boot is not active: the bootloader validates
@@ -246,7 +251,8 @@ python flash.py write stock_backup.bin 0x08000000
 ```
 
 If a bad flash leaves a console unreachable over SWD, `tools/rescue.py`
-catches the core in the window between power-on and the crash. See
+(J-Link) or `tools/rescue_openocd.py` (CMSIS-DAP) catches the core in the
+window between power-on and the crash. See
 [docs/FLASHING.md](docs/FLASHING.md#when-swd-stops-responding).
 
 ---
@@ -259,11 +265,11 @@ firmware/          the DOOM firmware, standalone build
   boards/          per-board pins, panel init, button map
     action104/     the 104 Games console
     pacman/        the PAC-MAN console
-  sdk/             clock, LCD, input, mailbox, startup
-  port/            GBADoom's platform layer
+  sdk/             clock, LCD, input, audio DMA, mailbox, startup
+  port/            GBADoom's platform layer (including the mixer)
   GBADoom/         vendored engine + engine-patches.diff
-tools/             what you need to flash: flash.py, the RAM writer, rescue.py
-wad/               trimmed shareware WAD (E1M1 only)
+tools/             flash.py (J-Link), flash_openocd.py (CMSIS-DAP), RAM writer, rescue
+wad/               trimmed shareware WAD (E1M1 + DS* sound lumps)
 dumps/             stock firmware and boot ROM, one folder per console
 docs/              hardware notes, flashing guide, porting guide
 images/            hardware photos and product listings

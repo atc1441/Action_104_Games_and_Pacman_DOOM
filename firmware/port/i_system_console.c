@@ -34,6 +34,8 @@
 #include "hostbox.h"
 #include "clock.h"
 #include "board.h"
+#include "audio.h"
+#include "uart.h"
 
 /* ------------------------------------------------------------------ *
  * Geometry
@@ -219,6 +221,8 @@ void I_InitScreen_e32(void)
     lcd_fill(0x0000);
     input_init();
     input_scan_init();
+    /* input_init() puts PB0 back to GPIO in; claim USART2 pins again. */
+    uart_init();
 }
 
 /* On the GBA these flip the VRAM page; we draw straight to the panel. */
@@ -239,9 +243,9 @@ void I_ClearWindow_e32(void)     { lcd_fill(0x0000); }
  * but was unplayably slow. Now it only subtracts and compares, all in
  * 32 bits, and the while loop normally runs zero or one times.
  *
- * The counter is 32 bits wide and wraps after about 70 seconds at 61 MHz,
- * which is exactly why this accumulates instead of dividing the absolute
- * value.
+ * The counter is 32 bits wide and wraps after about 22 seconds at 194 MHz
+ * (about 70 seconds at 61 MHz), which is exactly why this accumulates
+ * instead of dividing the absolute value.
  * ------------------------------------------------------------------ */
 #define TICRATE_HZ 35u
 
@@ -261,6 +265,8 @@ void I_TimerInit_console(uint32_t core_hz)
 int I_GetTime_e32(void)
 {
     uint32_t now = DWT_CYCCNT;
+
+    audio_service();
 
     acc_cyc += (uint32_t)(now - last_cyc);   /* wrapping is correct here */
     last_cyc = now;
@@ -387,6 +393,7 @@ int main(void)
     g_hostbox.scan_magic = 0;
 
     I_TimerInit_console(g_cpu_hz);
+    uart_init();
     return doom_main(0, 0);
 }
 
@@ -411,10 +418,9 @@ unsigned short *I_GetFrontBuffer(void) { return framebuffer; }
 /* ------------------------------------------------------------------ *
  * Fatal error
  *
- * The message goes to a fixed SRAM address so it can be read over SWD -
- * without a UART that is the only way to learn what the engine tripped
- * over. The screen turns red, then the core spins (no wfi - see
- * Default_Handler in startup.c).
+ * The message goes to USART2 and to a fixed SRAM address so it can be
+ * read over SWD if the UART is dead. The screen turns red, then the core
+ * spins (no wfi - see Default_Handler in startup.c).
  * ------------------------------------------------------------------ */
 void I_Error(const char *error, ...)
 {
@@ -425,6 +431,10 @@ void I_Error(const char *error, ...)
     va_end(ap);
 
     g_hostbox.err_magic = HOSTBOX_ERR_MAGIC;
+
+    uart_puts("I_Error: ");
+    uart_puts((const char *)g_hostbox.err_text);
+    uart_puts("\n");
 
     lcd_fill(0xF800);          /* red */
     for (;;) { }
