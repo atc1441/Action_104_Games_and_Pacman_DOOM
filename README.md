@@ -15,10 +15,13 @@ the SWD pads that are already on the board.
 **Prebuilt binaries are on the [releases page](../../releases)** - one
 image per console plus the WAD, rebuilt on every push.
 
-Both are built around the same nameless QFN48 SoC. There is no datasheet,
-no SDK and no vendor documentation for it. Everything in this repository -
+Both are built around the same unmarked QFN48 SoC. There is no datasheet
+and no vendor documentation for it. Everything in this repository -
 the register map, the panel init sequences, the button matrices - was
 reconstructed from the two stock firmwares and verified on the devices.
+Its peripherals turned out to match Aisinochip's ACM32 register set, so
+the public ACM32 SDKs now serve as a reference for most blocks - see
+[docs/SOC_IDENTIFICATION.md](docs/SOC_IDENTIFICATION.md).
 
 ## The two consoles
 
@@ -50,7 +53,7 @@ On **both** consoles:
 * **~194 MHz PLL**, matching stock. MPI retune runs from RAM; flash the
   image with the probe leaving the core halted and power-cycle with SWD
   idle so the debugger is not attached across the clock source switch
-* **Sound effects** through the DAC at `0x40012C00`, DMA channel 0, mixer
+* **Sound effects** as 8-bit PWM from TIM1 at `0x40012C00`, DMA channel 0, mixer
   in `firmware/port/i_sound_console.c`. Menu blips and in-game SFX are
   confirmed. The WAD at `0x08090000` includes the `DS*` lumps
 * Every button - eleven on the 104 Games, eight on the Pac-Man. On the
@@ -81,7 +84,7 @@ both boards.*
 
 | | |
 |---|---|
-| Core | **STAR-MC1** (Arm China), ARMv8-M Mainline, Cortex-M33 compatible, CPUID `0x631F1320`. Manufacturer never identified. |
+| Core | **STAR-MC1** (Arm China), ARMv8-M Mainline, Cortex-M33 compatible, CPUID `0x631F1320`. Exact part never identified; peripherals match Aisinochip's ACM32G103 / ACM32H5 SDKs. |
 | RAM | 280 KB SRAM at `0x20000000` (measured - a read at `0x20046000` resets the chip) |
 | Flash | Zbit ZB25VQ32, 4 MB, W25Q command compatible, memory-mapped at `0x08000000` |
 | Boot ROM | 32 KB on-chip, **byte-identical on both consoles** - same mask ROM |
@@ -91,7 +94,8 @@ both boards.*
 The peripheral base addresses look exactly like an STM32L4 (RCC at
 `0x40021000`, GPIO at `0x48000000`). The register layouts do not - GPIO
 input is at `+0x0C`, BSRR at `+0x14`, pull config at `+0x08`. Reaching for
-an STM32 SDK here will waste your afternoon.
+an STM32 SDK here will waste your afternoon. The layouts match Aisinochip's
+ACM32 SDKs instead ([docs/SOC_IDENTIFICATION.md](docs/SOC_IDENTIFICATION.md)).
 
 Because the boot ROM is identical, the flashing tools work unchanged on
 both boards. What differs is everything above it: the two stock firmwares
@@ -107,8 +111,9 @@ Full details in [docs/HARDWARE.md](docs/HARDWARE.md).
 
 Stock firmware: **FlyThings** by [ZKSWE](http://www.zkswe.com) (`Power by
 FlythingLite`, `unsupport platform, please contact www.zkswe.com`) with an
-NES emulator on top. That string is the best lead anyone has on who
-actually makes this chip.
+NES emulator on top. The same firmware also contains source paths from
+Aisinochip's ACM32 HAL SDK (`../../Drivers/HAL_Driver/Src/hal_gpio.c`
+and others).
 
 Buttons, read out of the stock key scan and then confirmed by pressing
 every one while watching the input registers:
@@ -271,7 +276,7 @@ firmware/          the DOOM firmware, standalone build
 tools/             flash.py (J-Link), flash_openocd.py (CMSIS-DAP), RAM writer, rescue
 wad/               trimmed shareware WAD (E1M1 + DS* sound lumps)
 dumps/             stock firmware and boot ROM, one folder per console
-docs/              hardware notes, flashing guide, porting guide
+docs/              hardware notes, SoC identification, flashing and porting guides
 images/            hardware photos and product listings
 ```
 

@@ -24,15 +24,23 @@ Unmarked QFN48.
 | TrustZone | not implemented |
 | Build flags | `-mcpu=cortex-m33 -mthumb -mfloat-abi=soft` |
 
-The manufacturer was never identified. CoreSight only names Arm China as
-the core supplier and no vendor ID register was found - do not spend time
-trying to derive it from the CoreSight IDs, that road ends.
+The exact part number was never identified. CoreSight only names Arm China
+as the core supplier and no vendor ID register was found - do not spend
+time trying to derive it from the CoreSight IDs, that road ends.
 
-The better lead is the stock firmware itself, which names its SDK:
+The peripherals, however, match **Aisinochip's ACM32 register set**. The
+stock 104 Games firmware contains the source paths
+`../../Drivers/HAL_Driver/Src/hal_{rcc,exti,gpio,uart}.c` from Aisinochip's
+HAL SDK. The base addresses, register offsets and bit positions documented
+below agree with the public SDKs for the ACM32G103 and the ACM32H5. No
+published ACM32 part matches the whole chip (package, SRAM size and RCC
+differ). The comparison, offset by offset, is in
+[SOC_IDENTIFICATION.md](SOC_IDENTIFICATION.md).
+
+The stock firmware also names the GUI framework it was built with:
 `Power by FlythingLite[%x]`, `FlyThings BuildTime %s`, and
 `unsupport platform,please contact www.zkswe.com`. The application on top
 is an NES emulator (`checkNESMagic: skipped rom with invalid mapper #%d`).
-FlyThings/ZKSWE documentation would give the register map directly.
 
 ## Memory map
 
@@ -54,15 +62,19 @@ strength of those `0xAA` reads.
 ## Peripherals
 
 Base addresses look exactly like an STM32L4. **The register layouts do
-not.**
+not.** They are Aisinochip's: the names in the last column come from the
+ACM32G103 / ACM32H5 SDK headers (see
+[SOC_IDENTIFICATION.md](SOC_IDENTIFICATION.md)).
 
-| Peripheral | Base |
-|---|---|
-| RCC | `0x40021000` (clock enables at `+0x28`, `+0x2C`, `+0x38`) |
-| GPIOA / GPIOB / GPIOC | `0x48000000` / `0x48000400` / `0x48000800` |
-| SPI (LCD) | `0x40030000` |
-| MPI / SPI (flash) | `0x52005000` - do not touch, XIP runs through it |
-| USART1 / USART2 | `0x40013800` / `0x40004400` - case UART is USART2 |
+| Peripheral | Base | Aisinochip SDK name |
+|---|---|---|
+| RCC | `0x40021000` (clock enables at `+0x28`, `+0x2C`, `+0x38`) | `RCC` (register layout differs from both SDKs) |
+| GPIOA / GPIOB / GPIOC | `0x48000000` / `0x48000400` / `0x48000800` | `GPIOA` / `GPIOB` / `GPIOC` |
+| SPI (LCD) | `0x40030000` | `SPI1` |
+| MPI / SPI (flash) | `0x52005000` - do not touch, XIP runs through it | `SPI7` (H5), memory window `0x08000000` |
+| USART1 / USART2 | `0x40013800` / `0x40004400` - case UART is USART2 | `UART1` / `UART2` (G103), `USART1` / `USART2` (H5) |
+| Audio | `0x40012C00` | `TIM1` - see [Audio](#audio) |
+| DMA | `0x40031000` | `DMA1` (G103) |
 
 ### UART
 
@@ -72,13 +84,13 @@ PB1**, AF 1 (`FUN_00002c94`). RCC `+0x34` bit 17 clocks the block.
 
 Register layout (not STM32 USART):
 
-| Offset | Role |
-|---|---|
-| `+0x00` | data (write a byte) |
-| `+0x04` | status: bit 5 TX full, bit 9 TX busy |
-| `+0x08` | baud (integer bits 21:6, 6-bit fraction) |
-| `+0x14` | control: bit 0 enable, `0x300` TX+RX |
-| `+0x1C` | `0xE0` = 8N1 plus bit 5 |
+| Offset | Role | SDK name |
+|---|---|---|
+| `+0x00` | data (write a byte) | `DR` |
+| `+0x04` | status: bit 5 TX full, bit 9 TX busy | `FR`: bit 5 `TXFF`, bit 9 `BUSY` |
+| `+0x08` | baud (integer bits 21:6, 6-bit fraction) | `BRR` |
+| `+0x14` | control: bit 0 enable, `0x300` TX+RX | `CR1` |
+| `+0x1C` | `0xE0` = 8N1 plus bit 5 | `CR3` |
 
 USART1 sits at `0x40013800` with PA9/PA10 in the boot ROM. The case
 exposes one UART; USART2 is what the boot ROM used, USART1 is the other
@@ -92,15 +104,21 @@ pin back into AF for USART2.
 
 ### GPIO
 
-Proven deviations from the STM32 layout:
+Proven deviations from the STM32 layout, with the Aisinochip SDK name for
+each offset:
 
-| Offset | Register |
-|---|---|
-| `+0x00` | MODER, 2 bits per pin |
-| `+0x08` | **PUPDR**, 2 bits per pin, `01` = pull-up (not OSPEEDR) |
-| `+0x0C` | **IDR** (not `+0x10`) |
-| `+0x14` | **BSRR**, set in low 16, reset in high 16 (not `+0x18`) |
-| `+0x20` / `+0x24` | AFRL / AFRH |
+| Offset | Register | SDK name |
+|---|---|---|
+| `+0x00` | MODER, 2 bits per pin | `MD` |
+| `+0x08` | **PUPDR**, 2 bits per pin, `01` = pull-up (not OSPEEDR) | `PUPD` |
+| `+0x0C` | **IDR** (not `+0x10`) | `IDATA` |
+| `+0x14` | **BSRR**, set in low 16, reset in high 16 (not `+0x18`) | `BSC` |
+| `+0x18` / `+0x1C` | - | `AF0` / `AF1`, alternate function, 4 bits per pin |
+| `+0x20` / `+0x24` | AFRL / AFRH (assumed in `soc.h`, not proven) | `DS0` / `DS1`, drive strength |
+| `+0x28` | - | `SMIT` |
+
+In the Aisinochip SDKs the alternate-function registers are at
+`+0x18`/`+0x1C`. `firmware/sdk/uart.c` writes the AF value to both pairs.
 
 The PUPDR offset in particular cost real time: with OSPEEDR assumed there,
 input init never enabled a pull-up, every input floated, and pressing a
@@ -110,17 +128,18 @@ button changed nothing at all.
 
 Both instances share the same IP block.
 
-| Offset | Register |
-|---|---|
-| `+0x00` | data |
-| `+0x08` | mode |
-| `+0x0C` | TX control (bit 0 enable, bit 1 reset) |
-| `+0x10` | RX control (bit 0 enable, bit 8 required) |
-| `+0x18` | status (bit 3 TX full, bit 4 RX empty, bit 14 TX done) |
-| `+0x20` | length |
-| `+0x24` | start |
-| `+0x2C` | XIP command register: `0x00040000` = manual, `0x05441849` = XIP |
-| `+0x30` | XIP read command, `0xFAEB` |
+| Offset | Register | SDK name (G103) |
+|---|---|---|
+| `+0x00` | data | `DAT` |
+| `+0x04` | flash clock divider | `BAUD` |
+| `+0x08` | mode | `CTL` |
+| `+0x0C` | TX control (bit 0 enable, bit 1 reset) | `TX_CTL` |
+| `+0x10` | RX control (bit 0 enable, bit 8 required) | `RX_CTL` |
+| `+0x18` | status (bit 3 TX full, bit 4 RX empty, bit 14 TX done) | `STATUS` (bit 3 `TX_FIFO_FULL`, bit 4 `RX_FIFO_EMPTY`, bit 14 `TX_BATCH_DONE`) |
+| `+0x20` | length | `BATCH` |
+| `+0x24` | start | `CS` |
+| `+0x2C` | XIP command register: `0x00040000` = manual, `0x05441849` = XIP | `MEMO_ACC` |
+| `+0x30` | XIP read command, `0xFAEB` | `CMD` |
 
 `+0x2C` is the actual switch between "controller fetches on its own" and
 "we push bytes through the FIFO". Bits 5:6 of `+0x08` are not, despite
@@ -285,28 +304,39 @@ Mapped from the running stock firmware over SWD, including a live dump
 while **Forest Kid** was playing (it starts sound on load). `sdk/audio.c`
 and `port/i_sound_console.c` are built.
 
-A PCM/DAC block at **`0x40012C00`**, fed by DMA:
+The block at **`0x40012C00`**, fed by DMA, is **TIM1** generating PWM, not
+a DAC. `0x40012C00` is `TIM1` in both Aisinochip SDKs, and every value
+observed while the stock firmware played decodes as an ordinary PWM setup.
+The bit meanings are the ones the ACM32G103 HAL (`hal_timer.c`) uses to
+configure PWM:
 
-| Register | Observed | Role |
-|---|---|---|
-| `+0x00` | `0x00000081` | bit 0 set on start |
-| `+0x0C` | `0x00000200` | |
-| `+0x10` | `0x00000003` | |
-| `+0x14` | | written during start |
-| `+0x18` | `0x00000068` | likely a divider |
-| `+0x20` | `0x00000001` | bit 0 = enable, last thing set |
-| `+0x24` | live counter | **not** config; it keeps changing with the CPU halted |
-| `+0x28` | `0x00000010` | |
-| `+0x2C` | `0x000000FF` | |
-| `+0x34` | | data register - DMA writes here |
-| `+0x44` | `0x00008000` | bit 15 set on start |
+| Register | Observed | TIM1 register | Meaning |
+|---|---|---|---|
+| `+0x00` | `0x00000081` | `CR1` | bit 0 CEN counter enable, bit 7 ARPE auto-reload preload |
+| `+0x0C` | `0x00000200` | `DIER` | bit 9: DMA request on capture/compare 1 |
+| `+0x10` | `0x00000003` | `SR` | bit 0 UIF, bit 1 CC1IF (status flags) |
+| `+0x14` | written during start | `EGR` | event generation |
+| `+0x18` | `0x00000068` | `CCMR1` | OC1M = 6 (PWM mode 1) at bits 4-6, OC1PE preload at bit 3 |
+| `+0x20` | `0x00000001` | `CCER` | bit 0: channel 1 output enable, last thing set |
+| `+0x24` | live counter | `CNT` | the counter; it keeps changing with the CPU halted |
+| `+0x28` | `0x00000010` | `PSC` | prescaler, divide by 17 |
+| `+0x2C` | `0x000000FF` | `ARR` | period, 256 counts |
+| `+0x34` | | `CCR1` | duty cycle - DMA writes each sample here |
+| `+0x44` | `0x00008000` | `BDTR` | bit 15 MOE, main output enable |
 
 `RCC+0x38` bit 6 is toggled off and on around the setup - that is the
 block's reset.
 
 ### DMA
 
-Channels are `0x40` apart from `0x40031100`. Two are in use:
+The controller at `0x40031000` matches the ACM32G103's `DMA1`: `+0x08`
+`INTTCCLR`, `+0x14` `RAWINTTCSTATUS`, `+0x1C` `ENCHSTATUS`, `+0x30`
+`CONFIG` (bit 0 `EN`), and per channel `CXSRCADDR`, `CXDESTADDR`, `CXLLI`,
+`CXCTRL`, `CXCONFIG`.
+
+Channels are `0x40` apart from `0x40031100` in `soc.h`. The Aisinochip
+SDKs space channels `0x20` apart, so the address used for channel 1
+(`0x40031140`) is the one the SDKs call channel 2. Two are in use:
 
 | Channel | Destination |
 |---|---|
@@ -342,11 +372,12 @@ volume button**. Stock `FUN_0803ec10` ping-pongs that level (PA0 up, PB2
 down, PC13 bounce) and prints `AudioVolume:%d`. DOOM does the same in
 `input_volume()` / the mixer.
 
-Output is 16-bit, so this is a real DAC path, not one-bit PWM.
+Output is **8-bit PWM**: with `ARR` = 255 the duty cycle in `CCR1` has 256
+steps, which matches the 8-bit source samples.
 
 ### Bringing it up: three things that were not in the code
 
-Replaying the observed DAC registers was not enough. Three separate
+Replaying the observed TIM1 registers was not enough. Three separate
 enables had to be found by diffing the whole peripheral state against the
 stock firmware while it was playing:
 
@@ -358,8 +389,10 @@ stock firmware while it was playing:
   correctly, and report the channel as enabled - and nothing moves.
 
 The output rate is **~14 kHz**, measured by counting completed DMA blocks
-(741 samples each) over 12 seconds. Nothing in the register map states it;
-`+0x18` = 0x68 remains the likely divider but that is unconfirmed.
+(741 samples each) over 12 seconds. TIM1 requests one sample per period,
+so the rate is `f_TIM / ((PSC + 1) * (ARR + 1))` = `f_TIM / 4352`: the
+measured 14,016 Hz corresponds to a 61.0 MHz timer clock. `+0x18` is
+`CCMR1`, not a divider.
 
 ### Where it stands
 
@@ -371,7 +404,7 @@ There is no music.
 
 What was proven along the way:
 
-* the DAC configures and the DMA channel arms exactly as in the stock
+* TIM1 configures and the DMA channel arms exactly as in the stock
   firmware, down to `CFG` reading back `0x000A0083`
 * sound does come out - one build produced a loud tone through the
   speaker, so the whole path from RAM to speaker is real
@@ -385,12 +418,12 @@ Kid live at `0x20044BA0`:
 | Offset | Value | Role |
 |---|---|---|
 | `+0x00` | ping-pong base | SRC; firmware patches this |
-| `+0x04` | `0x40012C34` | DST (DAC data) |
+| `+0x04` | `0x40012C34` | DST (TIM1 `CCR1`) |
 | `+0x08` | `0x20044BA0` | NEXT (self) |
 | `+0x0C` | `0x854002E1` | CTRL; low half is the reload count (737) |
-| `+0x10` | `0x40012C00` | DAC base (also the firmware's DAC pointer) |
-| `+0x14` | `0x00000010` | same as DAC `+0x28` |
-| `+0x18` | `0x000000FF` | same as DAC `+0x2C` |
+| `+0x10` | `0x40012C00` | TIM1 base (also the firmware's pointer to it) |
+| `+0x14` | `0x00000010` | same as TIM1 `+0x28` (`PSC`) |
+| `+0x18` | `0x000000FF` | same as TIM1 `+0x2C` (`ARR`) |
 | `+0x1C` | `0x00000001` | |
 
 Stock `FUN_0803f080` writes the first four words the same way (NEXT =
@@ -403,9 +436,10 @@ Two smaller findings worth keeping:
 
 * GPIOA `+0x1C` and `+0x28` have to be set (the stock has `0x20000114`
   and `0x00009F3F`). Without them the channel arms and then sits there,
-  because the DAC never raises a request. Writing them by assignment
+  because TIM1 never raises a request. Writing them by assignment
   rather than OR takes the debug port down - PA13/PA14 are SWD on the
-  same port.
+  same port. In the Aisinochip SDKs these offsets are `AF1` (alternate
+  function for pins 8-15, which include PA13/PA14) and `SMIT`.
 * The engine side is done: GBADoom's `i_audio.c` is GBA/Maxmod only, so
   `i_sound_console.c` replaces it with an eight-channel mixer reading the
   `DS*` lumps straight out of XIP flash.
