@@ -137,42 +137,67 @@ static inline void gpio_mode(uint32_t port, uint32_t pin, uint32_t mode)
 #define SPI_SR_TXE   (1u << 14)   /* the stock code tests it via lsls #17 */
 
 /* ------------------------------------------------------------------ *
- * Audio                                                      [V]
+ * TIM1 - audio PWM                                           [V]
  *
- * A PCM/DAC block fed by DMA. Driver in sdk/audio.c; mixer in
- * port/i_sound_console.c. Confirmed on hardware (menu blips and SFX).
+ * Sound is 8-bit PWM from TIM1, fed by DMA. Driver in sdk/audio.c; mixer
+ * in port/i_sound_console.c. Confirmed on hardware (menu blips and SFX).
+ *
+ * 0x40012C00 is TIM1 in the Aisinochip ACM32G103 and ACM32H5 SDKs, and
+ * every value observed while the stock firmware was playing decodes as
+ * a PWM setup there (see docs/SOC_IDENTIFICATION.md). Register names and
+ * bit positions below are the SDK's.
  *
  * Stock: two ping-pong buffers in SRAM; DMA channel 0 streams them into
- * AUDIO_DATA via an 8-word self-looping descriptor. Sample values come
- * from 8-bit PCM divided by a volume divisor. Volume is software; the
- * 104 Games case has one button that ping-pongs levels 0..3.
+ * TIM1_CCR1 via an 8-word self-looping descriptor, one sample per timer
+ * period. Sample values come from 8-bit PCM divided by a volume divisor.
+ * Volume is software; the 104 Games case has one button that ping-pongs
+ * levels 0..3.
  *
  * Register values observed while the stock firmware was playing:
- *   +0x00 = 0x00000081   +0x0C = 0x00000200   +0x10 = 0x00000003
- *   +0x18 = 0x00000068   +0x20 = 0x00000001   +0x24 = live counter
- *   +0x28 = 0x00000010   +0x2C = 0x000000FF   +0x44 = 0x00008000
+ *   CR1  = 0x00000081   DIER = 0x00000200   SR   = 0x00000003
+ *   CCMR1= 0x00000068   CCER = 0x00000001   CNT  = live counter
+ *   PSC  = 0x00000010   ARR  = 0x000000FF   BDTR = 0x00008000
  *
  * The start sequence, from app_board_init:
- *   +0x20 &= ~1;  DMA enable &= ~1;  +0x34 = 0;  +0x14 = <val>;
- *   DMA enable |= 1;  +0x44 |= 0x8000;  +0x00 |= 1;  +0x20 |= 1
+ *   CCER &= ~CC1E;  DMA enable &= ~1;  CCR1 = 0;  EGR = <val>;
+ *   DMA enable |= 1;  BDTR |= MOE;  CR1 |= CEN;  CCER |= CC1E
  * Teardown is the reverse. RCC+0x38 bit 6 is toggled off and on around
  * it, which is the block's reset.
+ *
+ * Sample rate = f_TIM / ((PSC + 1) * (ARR + 1)) = f_TIM / 4352.
  * ------------------------------------------------------------------ */
-#define AUDIO_BASE   0x40012C00u
-#define AUDIO_DATA   REG32(AUDIO_BASE + 0x34)   /* DMA writes here */
-#define AUDIO_EN     REG32(AUDIO_BASE + 0x20)   /* bit0 */
-#define AUDIO_CR0    REG32(AUDIO_BASE + 0x00)   /* bit0 */
-#define AUDIO_CR44   REG32(AUDIO_BASE + 0x44)   /* bit15 */
+#define TIM1_BASE   0x40012C00u
+#define TIM1_CR1    REG32(TIM1_BASE + 0x00)
+#define TIM1_DIER   REG32(TIM1_BASE + 0x0C)
+#define TIM1_SR     REG32(TIM1_BASE + 0x10)
+#define TIM1_EGR    REG32(TIM1_BASE + 0x14)
+#define TIM1_CCMR1  REG32(TIM1_BASE + 0x18)
+#define TIM1_CCER   REG32(TIM1_BASE + 0x20)
+#define TIM1_CNT    REG32(TIM1_BASE + 0x24)   /* counts while playing  */
+#define TIM1_PSC    REG32(TIM1_BASE + 0x28)
+#define TIM1_ARR    REG32(TIM1_BASE + 0x2C)
+#define TIM1_CCR1   REG32(TIM1_BASE + 0x34)   /* DMA writes here       */
+#define TIM1_BDTR   REG32(TIM1_BASE + 0x44)
 
-/* RCC+0x38, called RCC_EN2 above - toggled off and on to reset the
- * audio block. (IDA labels the same register RCC_EN3.) */
-#define RCC_EN2_AUDIO  (1u << 6)
+#define TIM_CR1_CEN         (1u << 0)    /* counter enable                */
+#define TIM_CR1_ARPE        (1u << 7)    /* ARR preload                   */
+#define TIM_SR_UIF          (1u << 0)    /* update flag                   */
+#define TIM_SR_CC1IF        (1u << 1)    /* capture/compare 1 flag        */
+#define TIM_DIER_CC1DE      (1u << 9)    /* DMA request on CC1            */
+#define TIM_CCMR1_OC1PE     (1u << 3)    /* CCR1 preload                  */
+#define TIM_CCMR1_OC1M_PWM1 (6u << 4)    /* OC1M = PWM mode 1             */
+#define TIM_CCER_CC1E       (1u << 0)    /* channel 1 output enable       */
+#define TIM_BDTR_MOE        (1u << 15)   /* main output enable            */
+
+/* RCC+0x38, called RCC_EN2 above - toggled off and on to reset TIM1.
+ * (IDA labels the same register RCC_EN3.) */
+#define RCC_EN2_TIM1   (1u << 6)
 
 /* ------------------------------------------------------------------ *
  * DMA                                                        [V]
  *
  * Channels are 0x40 apart starting at 0x40031100. Two are in use:
- *   channel 0  ->  AUDIO_DATA (self-loop, CTRL high 0x8540, CFG 0x000A0083)
+ *   channel 0  ->  TIM1_CCR1 (self-loop, CTRL high 0x8540, CFG 0x000A0083)
  *   channel 1  ->  LCD SPI data 0x40030000 (one-shot, lcd.c spi_write_dma)
  *
  * Channel 1 live values from stock FUN_08027464 (NES lines were 512 bytes;

@@ -1,37 +1,40 @@
 /*
- * audio.c - DAC output driven by DMA
+ * audio.c - TIM1 PWM output driven by DMA
  *
  * Rebuilt from the stock firmware, which was read live over SWD rather
  * than derived from a datasheet - there is none. See docs/HARDWARE.md.
  *
- * The register values below are replayed exactly as they were observed
- * while the stock firmware was playing. That is deliberate: what the
- * individual bits mean is not established, and inventing plausible
- * meanings for them would be guessing dressed up as understanding. Once
- * sound comes out, the individual fields can be probed one at a time.
+ * The register values below are the ones observed while the stock
+ * firmware was playing, written in the same order. They were first
+ * replayed as bare numbers; the block has since turned out to be TIM1
+ * (docs/SOC_IDENTIFICATION.md), so each value is now spelled out with
+ * the field names of the Aisinochip SDK. The values themselves have not
+ * changed.
  *
- * The one number this does NOT give us is the sample rate. Nothing in the
- * observed registers identifies it - +0x18 = 0x68 is the obvious
- * candidate for a divider, but that is a guess. audio_blocks() exists so
- * the rate can be measured from the host instead of assumed; see
- * docs/HARDWARE.md for how.
+ * Decoded, it is plain PWM: PWM mode 1 on channel 1, ARR = 255 so the
+ * duty cycle in CCR1 takes 256 steps, and a DMA request on every CC1
+ * event, i.e. one 8-bit sample per timer period.
+ *
+ * The sample rate follows from that: f_TIM / ((PSC + 1) * (ARR + 1)).
+ * The timer clock itself is not established - the RCC of this SoC does
+ * not match either SDK - so audio_blocks() still exists to measure the
+ * rate from the host instead of assuming it; see docs/HARDWARE.md.
  */
 
 #include "audio.h"
 #include "soc.h"
 
 /*
- * DAC register values as observed in the running stock firmware.
+ * TIM1 register values as observed in the running stock firmware.
  * Written in the same order the stock start sequence uses.
  */
-#define DAC_R00_VAL   0x00000081u
-#define DAC_R0C_VAL   0x00000200u
-#define DAC_R10_VAL   0x00000003u
-#define DAC_R14_VAL   0x00000000u
-#define DAC_R18_VAL   0x00000068u
-#define DAC_R28_VAL   0x00000010u
-#define DAC_R2C_VAL   0x000000FFu
-#define DAC_R44_BIT   0x00008000u
+#define TIM1_CR1_VAL    (TIM_CR1_ARPE | TIM_CR1_CEN)            /* 0x81  */
+#define TIM1_DIER_VAL   TIM_DIER_CC1DE                          /* 0x200 */
+#define TIM1_SR_VAL     (TIM_SR_CC1IF | TIM_SR_UIF)             /* 0x03  */
+#define TIM1_EGR_VAL    0x00000000u
+#define TIM1_CCMR1_VAL  (TIM_CCMR1_OC1M_PWM1 | TIM_CCMR1_OC1PE) /* 0x68  */
+#define TIM1_PSC_VAL    16u        /* timer clock / 17                  */
+#define TIM1_ARR_VAL    255u       /* period of 256: 8-bit duty cycle   */
 
 /*
  * DMA channel 0. The control word's low half is the remaining transfer
@@ -42,8 +45,8 @@
 #define DMA_CFG_VAL   0x000A0083u
 #define DMA_DONE_CH0  (1u << 0)
 
-/* The buffers hold 16-bit words even though the useful range is 8 bits;
- * that is how the stock firmware feeds this DAC. */
+/* The buffers hold 16-bit words even though the useful range is 8 bits
+ * (0..ARR); that is how the stock firmware feeds CCR1. */
 static uint16_t buf[2][AUDIO_BUF_SAMPLES];
 
 /*
@@ -51,12 +54,12 @@ static uint16_t buf[2][AUDIO_BUF_SAMPLES];
  * an 8-word self-looping descriptor:
  *
  *   +0x00 SRC   ping-pong base (firmware patches this)
- *   +0x04 DST   0x40012C34
+ *   +0x04 DST   0x40012C34 (TIM1_CCR1)
  *   +0x08 NEXT  0x20044BA0 (self)
  *   +0x0C CTRL  0x854002E1
- *   +0x10       0x40012C00
- *   +0x14       0x10
- *   +0x18       0xFF
+ *   +0x10       0x40012C00 (TIM1_BASE)
+ *   +0x14       0x10       (same as TIM1_PSC)
+ *   +0x18       0xFF       (same as TIM1_ARR)
  *   +0x1C       1
  *
  * Earlier we pointed +0x08 at a single next-SRC word; the controller
@@ -68,7 +71,7 @@ typedef struct {
     volatile uint32_t dst;
     volatile uint32_t next;
     volatile uint32_t ctrl;
-    volatile uint32_t dac_base;
+    volatile uint32_t tim_base;
     volatile uint32_t w14;
     volatile uint32_t w18;
     volatile uint32_t w1c;
@@ -94,12 +97,12 @@ static void dma_start(unsigned play)
     const unsigned nxt = play ^ 1u;
 
     desc.src      = (uint32_t)(uintptr_t)buf[nxt];
-    desc.dst      = (uint32_t)(uintptr_t)&AUDIO_DATA;
+    desc.dst      = (uint32_t)(uintptr_t)&TIM1_CCR1;
     desc.next     = (uint32_t)(uintptr_t)&desc;
     desc.ctrl     = DMA_CTRL_HI | AUDIO_BUF_SAMPLES;
-    desc.dac_base = AUDIO_BASE;
-    desc.w14      = DAC_R28_VAL;
-    desc.w18      = DAC_R2C_VAL;
+    desc.tim_base = TIM1_BASE;
+    desc.w14      = TIM1_PSC_VAL;
+    desc.w18      = TIM1_ARR_VAL;
     desc.w1c      = 1;
 
     DMA_CH_CFG(0)  = DMA_CFG_VAL & ~1u;
@@ -123,16 +126,16 @@ void audio_init(void)
      * and its registers read back as zero however often you write them -
      * which is exactly the symptom that led here.
      *
-     * Which of the three is the DMA and which the DAC is not established;
+     * Which of the three is the DMA and which TIM1 is not established;
      * setting what the stock firmware sets is the honest option.
      */
     RCC_EN0 |= 0x00000003u;
     RCC_EN2 |= 0x00000200u;
 
-    /* Reset the audio block: RCC+0x38 bit 6 off, then on, as the stock
-     * firmware does around its audio setup. */
-    RCC_EN2 &= ~RCC_EN2_AUDIO;
-    RCC_EN2 |=  RCC_EN2_AUDIO;
+    /* Reset TIM1: RCC+0x38 bit 6 off, then on, as the stock firmware
+     * does around its audio setup. */
+    RCC_EN2 &= ~RCC_EN2_TIM1;
+    RCC_EN2 |=  RCC_EN2_TIM1;
 
     for (unsigned i = 0; i < 2; i++) {
         for (unsigned s = 0; s < AUDIO_BUF_SAMPLES; s++) {
@@ -140,26 +143,25 @@ void audio_init(void)
         }
     }
 
-    AUDIO_EN = 0;                                /* off while configuring */
-    REG32(AUDIO_BASE + 0x0C) = DAC_R0C_VAL;
-    REG32(AUDIO_BASE + 0x10) = DAC_R10_VAL;
-    REG32(AUDIO_BASE + 0x14) = DAC_R14_VAL;
-    REG32(AUDIO_BASE + 0x18) = DAC_R18_VAL;
-    /* +0x24 is a live hardware counter while playing (Forest Kid: it
-     * kept changing with the CPU halted). Do not treat 0x89 as config. */
-    REG32(AUDIO_BASE + 0x28) = DAC_R28_VAL;
-    REG32(AUDIO_BASE + 0x2C) = DAC_R2C_VAL;
-    AUDIO_DATA = 0;
+    TIM1_CCER  = 0;                              /* off while configuring */
+    TIM1_DIER  = TIM1_DIER_VAL;
+    /* SR holds status flags; the stock value is replayed as observed. */
+    TIM1_SR    = TIM1_SR_VAL;
+    TIM1_EGR   = TIM1_EGR_VAL;
+    TIM1_CCMR1 = TIM1_CCMR1_VAL;
+    /* CNT (+0x24) is the timer counter, live while playing (Forest Kid:
+     * it kept changing with the CPU halted). Do not treat 0x89 as config. */
+    TIM1_PSC   = TIM1_PSC_VAL;
+    TIM1_ARR   = TIM1_ARR_VAL;
+    TIM1_CCR1  = 0;
 
     /*
      * Put PA6 and PA7 into analog mode - that is how the stock firmware
-     * leaves them, and analog on a pin that is neither GPIO nor an
-     * alternate function is what a DAC output looks like.
+     * leaves them. What they carry in the audio path is not established.
      *
      * This matters because lcd_gpio_init() drives PA6 back to input as a
-     * side effect of its MODER mask, which disconnects the output. With
-     * the pin left as an input the DAC converts into nothing: the DMA
-     * runs, the block counter advances, and the speaker stays silent
+     * side effect of its MODER mask. With the pin left as an input the
+     * DMA runs, the block counter advances, and the speaker stays silent
      * apart from coupling noise - which is exactly what was heard.
      */
     {
@@ -172,10 +174,10 @@ void audio_init(void)
          *
          * These are needed: without them the DMA channel arms correctly
          * and then sits there - source pointer and transfer count frozen,
-         * because the DAC never raises a request. With them, sound comes
-         * out. What they actually do is not established; +0x20/+0x24 are
-         * the alternate-function selects, so these are something adjacent
-         * to pin routing.
+         * because TIM1 never raises a request. With them, sound comes
+         * out. In the Aisinochip SDKs +0x1C is AF1 (alternate function
+         * of pins 8-15) and +0x28 is SMIT; which bits matter here is not
+         * established.
          *
          * OR rather than assignment on purpose. Overwriting them outright
          * took the debug port down with it - PA13/PA14 are SWD and sit on
@@ -197,9 +199,9 @@ void audio_init(void)
     playing = 0;
     dma_start(0);
 
-    AUDIO_CR44 |= DAC_R44_BIT;
-    AUDIO_CR0   = DAC_R00_VAL;
-    AUDIO_EN    = 1;
+    TIM1_BDTR |= TIM_BDTR_MOE;
+    TIM1_CR1   = TIM1_CR1_VAL;
+    TIM1_CCER  = TIM_CCER_CC1E;
 
     running = 1;
 }

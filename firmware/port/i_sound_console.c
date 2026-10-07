@@ -6,8 +6,8 @@
  * Makefile filters that file out.
  *
  * The mixer is the classic DOOM one: eight channels, nearest-neighbour
- * resampling, summed into an unsigned buffer that sdk/audio.c streams to
- * the DAC by DMA.
+ * resampling, summed into an unsigned buffer that sdk/audio.c streams by
+ * DMA into TIM1, which plays it as 8-bit PWM.
  *
  * Sample data is NOT copied into RAM. DOOM's DS* lumps are read straight
  * out of the memory-mapped flash, the same trick the WAD itself uses -
@@ -33,12 +33,14 @@ const int snd_samplerate = 14016;
  * Output rate, measured rather than assumed: audio_blocks() counts
  * completed DMA blocks, and 741 samples per block over 12 seconds gave
  * 14016 Hz (a 3-second run gave 14071, so it is stable). Forest Kid's
- * live descriptor reloads 737 samples; the DAC divider is unchanged, so
+ * live descriptor reloads 737 samples; the TIM1 setup is unchanged, so
  * the rate stands until it is measured again.
  *
- * The DAC's rate divider was never identified in the register map, so
- * this number comes from the stopwatch, not the datasheet. If you change
- * the DAC configuration in sdk/audio.c, measure it again.
+ * TIM1 requests one sample per period, so the rate is
+ * f_TIM / ((PSC + 1) * (ARR + 1)) = f_TIM / 4352; 14016 Hz corresponds
+ * to a 61.0 MHz timer clock. That clock is not established from the
+ * register map, so this number comes from the stopwatch, not the
+ * datasheet. If you change PSC, ARR or the clock tree, measure it again.
  */
 #define OUT_RATE 14016u
 
@@ -119,7 +121,11 @@ int I_StartSound(int id, int channel, int vol, int sep)
 
 #ifdef AUDIO_SELFTEST
 /*
- * Temporary: work out what the DAC actually wants.
+ * Temporary: work out what the output actually wants.
+ *
+ * Kept from bring-up, before the block was known to be TIM1. With
+ * ARR = 255 the answer is format 1: CCR1 takes 0..255, and the other
+ * formats put most values outside the PWM range.
  *
  * Faint noise and no tone means either the level is far too low or the
  * sample format is wrong, and those two look identical from the outside.
@@ -182,8 +188,8 @@ void audio_fill(uint16_t *dst, unsigned n)
 /*
  * Called from sdk/audio.c when a DMA block has been consumed.
  *
- * Output is unsigned with 128 as silence, matching what the stock
- * firmware feeds this DAC. The accumulator is signed so that channels can
+ * Output is unsigned 0..255 with 128 as silence, matching what the stock
+ * firmware feeds TIM1 (ARR = 255, so that is the full duty-cycle range). The accumulator is signed so that channels can
  * cancel; it is clamped rather than wrapped, because wrapping a mix turns
  * a loud moment into a burst of noise.
  */
@@ -235,7 +241,7 @@ void I_InitSound(void)
     audio_init();
     sound_ready = 1;
 
-    lprintf(LO_INFO, "I_InitSound: DAC ready");
+    lprintf(LO_INFO, "I_InitSound: TIM1 PWM ready");
 }
 
 /*
