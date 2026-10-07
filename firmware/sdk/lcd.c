@@ -153,14 +153,16 @@ void lcd_gpio_init(void)
     RCC_EN0 |= RCC_EN0_DMA;
     RCC_EN2 |= RCC_EN2_DMA;
 
-    /* DC and CS as outputs, SCK and MOSI as alternate function */
-    uint32_t m = GPIO_MODER(LCD_PORT);
-    m &= ~BOARD_LCD_MODER_MASK;
-    m |=  BOARD_LCD_MODER;
-    GPIO_MODER(LCD_PORT) = m;
-
-    GPIO_AFRL(LCD_PORT)  = BOARD_LCD_AFRL;
-    GPIO_PUPDR(LCD_PORT) = BOARD_LCD_PUPDR;
+    /*
+     * Pins as the stock LCD init sets them: SCK and MOSI alternate
+     * function 0 (SPI1), DC and CS outputs, all four pulled up. PA8 is a
+     * plain output (backlight or panel reset, see board.h).
+     */
+    gpio_config(LCD_PORT, LCD_PIN_SCK,  GPIO_MODE_AF,  GPIO_PULL_UP, 0, 0);
+    gpio_config(LCD_PORT, LCD_PIN_MOSI, GPIO_MODE_AF,  GPIO_PULL_UP, 0, 0);
+    gpio_config(LCD_PORT, LCD_PIN_DC,   GPIO_MODE_OUT, GPIO_PULL_UP, 0, 0);
+    gpio_config(LCD_PORT, LCD_PIN_CS,   GPIO_MODE_OUT, GPIO_PULL_UP, 0, 0);
+    gpio_config(LCD_PORT, LCD_PIN_BL,   GPIO_MODE_OUT, GPIO_PULL_NONE, 0, 0);
 
     /* Controller base configuration */
     REG32(SPI + 0x08) = BOARD_LCD_SPI_MODE;

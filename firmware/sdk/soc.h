@@ -82,20 +82,38 @@
  * The third one cost real time: OSPEEDR was assumed at +0x08, so input
  * init never enabled any pull-up. The inputs floated and pressing a
  * button against ground changed nothing at all.
+ *
+ * The rest of the layout is Aisinochip's GPIO_TypeDef (ACM32G103/H5 SDK
+ * names in the comments), as used by the stock HAL_GPIO_Init:
+ *
+ *   - +0x18 / +0x1C select the alternate function, 4 bits per pin
+ *     (AF0 pins 0-7, AF1 pins 8-15).
+ *   - +0x20 is drive strength, 2 bits per pin for all 16 pins. The G103
+ *     and H5 use 4 bits per pin over DS0/DS1; this chip does not, and
+ *     +0x24 is unused.
+ *   - +0x28 is the Schmitt-trigger input enable, one bit per pin.
+ *
+ * Bonded pins: GPIOA 0xFF3F (no PA6/PA7), GPIOB 0x00FF, GPIOC 0xE1FF.
  */
-#define GPIO_MODER(p)    REG32((p) + 0x00)   /* [V] 2 bits/pin             */
-#define GPIO_OTYPER(p)   REG32((p) + 0x04)   /* [A]                        */
-#define GPIO_PUPDR(p)    REG32((p) + 0x08)   /* [V] 2 bits/pin, 01=pull-up */
-#define GPIO_IDR(p)      REG32((p) + 0x0C)   /* [V] input state            */
-#define GPIO_ODR(p)      REG32((p) + 0x10)   /* [A] presumably output      */
-#define GPIO_BSRR(p)     REG32((p) + 0x14)   /* [V] set lo16 / reset hi16  */
-#define GPIO_AFRL(p)     REG32((p) + 0x20)   /* [A] 4 bits/pin, pins 0..7  */
-#define GPIO_AFRH(p)     REG32((p) + 0x24)   /* [A] 4 bits/pin, pins 8..15 */
+#define GPIO_MODER(p)    REG32((p) + 0x00)   /* [V] MD, 2 bits/pin          */
+#define GPIO_OTYPER(p)   REG32((p) + 0x04)   /* [V] OTYP, 1 = open drain    */
+#define GPIO_PUPDR(p)    REG32((p) + 0x08)   /* [V] PUPD, 01 up, 10 down    */
+#define GPIO_IDR(p)      REG32((p) + 0x0C)   /* [V] IDATA                   */
+#define GPIO_ODR(p)      REG32((p) + 0x10)   /* [A] ODATA                   */
+#define GPIO_BSRR(p)     REG32((p) + 0x14)   /* [V] BSC, set lo / reset hi  */
+#define GPIO_AF0(p)      REG32((p) + 0x18)   /* [V] 4 bits/pin, pins 0..7   */
+#define GPIO_AF1(p)      REG32((p) + 0x1C)   /* [V] 4 bits/pin, pins 8..15  */
+#define GPIO_DS(p)       REG32((p) + 0x20)   /* [V] drive, 2 bits/pin 0..15 */
+#define GPIO_SMIT(p)     REG32((p) + 0x28)   /* [V] Schmitt input enable    */
 
 #define GPIO_MODE_IN      0u
 #define GPIO_MODE_OUT     1u
 #define GPIO_MODE_AF      2u
 #define GPIO_MODE_ANALOG  3u
+
+#define GPIO_PULL_NONE    0u
+#define GPIO_PULL_UP      1u
+#define GPIO_PULL_DOWN    2u
 
 #define GPIO_SET(p, n)  (GPIO_BSRR(p) = (1u << (n)))
 #define GPIO_CLR(p, n)  (GPIO_BSRR(p) = (1u << ((n) + 16)))
@@ -106,6 +124,32 @@ static inline void gpio_mode(uint32_t port, uint32_t pin, uint32_t mode)
     m &= ~(3u << (pin * 2));
     m |=  (mode & 3u) << (pin * 2);
     GPIO_MODER(port) = m;
+}
+
+/*
+ * One pin, configured the way the stock HAL_GPIO_Init does it: AF number
+ * (AF mode only), drive strength and push-pull (output and AF modes),
+ * pull, Schmitt enable, then the mode last. Only the given pin's fields
+ * are touched. That matters on GPIOA, where PA13/PA14 are SWD: overwriting
+ * a whole register takes the debug port down.
+ */
+static inline void gpio_config(uint32_t port, uint32_t pin, uint32_t mode,
+                               uint32_t pull, uint32_t drive, uint32_t af)
+{
+    const uint32_t s2 = pin * 2;
+
+    if (mode == GPIO_MODE_AF) {
+        volatile uint32_t *afr = pin < 8 ? &GPIO_AF0(port) : &GPIO_AF1(port);
+        const uint32_t s4 = (pin & 7u) * 4;
+        *afr = (*afr & ~(0xFu << s4)) | ((af & 0xFu) << s4);
+    }
+    if (mode == GPIO_MODE_OUT || mode == GPIO_MODE_AF) {
+        GPIO_DS(port) = (GPIO_DS(port) & ~(3u << s2)) | ((drive & 3u) << s2);
+        GPIO_OTYPER(port) &= ~(1u << pin);
+    }
+    GPIO_PUPDR(port) = (GPIO_PUPDR(port) & ~(3u << s2)) | ((pull & 3u) << s2);
+    GPIO_SMIT(port) |= 1u << pin;
+    gpio_mode(port, pin, mode);
 }
 
 /* ------------------------------------------------------------------ *
@@ -188,6 +232,11 @@ static inline void gpio_mode(uint32_t port, uint32_t pin, uint32_t mode)
 #define TIM_CCMR1_OC1M_PWM1 (6u << 4)    /* OC1M = PWM mode 1             */
 #define TIM_CCER_CC1E       (1u << 0)    /* channel 1 output enable       */
 #define TIM_BDTR_MOE        (1u << 15)   /* main output enable            */
+
+/* TIM1 channel 1 output to the speaker: PA15, AF2. */
+#define TIM1_CH1_PORT  GPIOA_BASE
+#define TIM1_CH1_PIN   15u
+#define TIM1_CH1_AF    2u
 
 /* RCC+0x38, called RCC_EN2 above - toggled off and on to reset TIM1.
  * (IDA labels the same register RCC_EN3.) */

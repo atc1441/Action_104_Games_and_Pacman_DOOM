@@ -36,15 +36,8 @@ void input_init(void)
         const uint32_t port = board_keys[i].pin.port;
         const uint32_t pin  = board_keys[i].pin.pin;
 
-        gpio_mode(port, pin, GPIO_MODE_IN);
-
-        /* Enable the pull-up. Without it the inputs float and a button
-         * pressed against ground changes nothing - several measurement
-         * attempts died on exactly that. */
-        uint32_t pu = GPIO_PUPDR(port);
-        pu &= ~(3u << (pin * 2));
-        pu |=  (1u << (pin * 2));      /* 01 = pull-up */
-        GPIO_PUPDR(port) = pu;
+        /* Input with pull-up: the buttons pull to ground. */
+        gpio_config(port, pin, GPIO_MODE_IN, GPIO_PULL_UP, 0, 0);
     }
 
 #ifdef BOARD_HAS_VOL_BUTTON
@@ -57,11 +50,7 @@ void input_init(void)
         for (unsigned i = 0; i < 3; i++) {
             const uint32_t port = vol_pins[i].port;
             const uint32_t pin  = vol_pins[i].pin;
-            gpio_mode(port, pin, GPIO_MODE_IN);
-            uint32_t pu = GPIO_PUPDR(port);
-            pu &= ~(3u << (pin * 2));
-            pu |=  (1u << (pin * 2));
-            GPIO_PUPDR(port) = pu;
+            gpio_config(port, pin, GPIO_MODE_IN, GPIO_PULL_UP, 0, 0);
         }
     }
 #endif

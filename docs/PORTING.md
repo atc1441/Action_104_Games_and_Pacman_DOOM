@@ -75,8 +75,11 @@ software instead, on the way to the panel.
 ### 2. LCD register values
 
 Easier read live than derived. Halt the stock firmware once it has drawn
-something and dump GPIO MODER/AFRL/PUPDR plus the SPI controller
-registers, then put those values into `BOARD_LCD_*`.
+something and dump the SPI controller registers, then put those values
+into `BOARD_LCD_*`. The pins themselves are set up by `lcd.c` with
+`gpio_config()`, the way the stock LCD init does it; check them against
+the stock firmware's `HAL_GPIO_Init` calls (pin mask, mode, pull, drive,
+alternate function) rather than replaying whole GPIO registers.
 
 ### 3. Buttons
 

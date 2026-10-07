@@ -66,25 +66,9 @@ static void uart_gpio_usart2(void)
     RCC_EN1     |= RCC_EN1_GPIOB;
     RCC_EN2     |= RCC_EN2_LCDMISC;
 
-    uint32_t m = GPIO_MODER(GPIOB_BASE);
-    m &= ~((3u << 0) | (3u << 2));
-    m |=  (GPIO_MODE_AF << 0) | (GPIO_MODE_AF << 2);
-    GPIO_MODER(GPIOB_BASE) = m;
-
-    uint32_t pu = GPIO_PUPDR(GPIOB_BASE);
-    pu &= ~((3u << 0) | (3u << 2));
-    pu |=  (1u << 0) | (1u << 2);
-    GPIO_PUPDR(GPIOB_BASE) = pu;
-
-    uint32_t afr18 = REG32(GPIOB_BASE + 0x18);
-    afr18 &= ~0xFFu;
-    afr18 |= (UART_AF << 0) | (UART_AF << 4);
-    REG32(GPIOB_BASE + 0x18) = afr18;
-
-    uint32_t afr20 = GPIO_AFRL(GPIOB_BASE);
-    afr20 &= ~0xFFu;
-    afr20 |= (UART_AF << 0) | (UART_AF << 4);
-    GPIO_AFRL(GPIOB_BASE) = afr20;
+    /* PB0/PB1 AF1, pull-up, drive 3, as the boot ROM sets them. */
+    gpio_config(GPIOB_BASE, 0, GPIO_MODE_AF, GPIO_PULL_UP, 3u, UART_AF);
+    gpio_config(GPIOB_BASE, 1, GPIO_MODE_AF, GPIO_PULL_UP, 3u, UART_AF);
 }
 
 static void uart_gpio_usart1(void)
@@ -94,25 +78,9 @@ static void uart_gpio_usart1(void)
     RCC_EN2 |= 0x210u;
     RCC_APB1ENR |= (1u << 14);   /* STM32-style USART1EN; harmless if unused */
 
-    uint32_t m = GPIO_MODER(GPIOA_BASE);
-    m &= ~((3u << 18) | (3u << 20));
-    m |=  (GPIO_MODE_AF << 18) | (GPIO_MODE_AF << 20);
-    GPIO_MODER(GPIOA_BASE) = m;
-
-    uint32_t pu = GPIO_PUPDR(GPIOA_BASE);
-    pu &= ~((3u << 18) | (3u << 20));
-    pu |=  (1u << 18) | (1u << 20);
-    GPIO_PUPDR(GPIOA_BASE) = pu;
-
-    uint32_t afr1c = REG32(GPIOA_BASE + 0x1C);
-    afr1c &= ~(0xFFu << 4);
-    afr1c |= (UART_AF << 4) | (UART_AF << 8);
-    REG32(GPIOA_BASE + 0x1C) = afr1c;
-
-    uint32_t afrh = GPIO_AFRH(GPIOA_BASE);
-    afrh &= ~(0xFFu << 4);
-    afrh |= (UART_AF << 4) | (UART_AF << 8);
-    GPIO_AFRH(GPIOA_BASE) = afrh;
+    /* PA9/PA10 AF1, pull-up, drive 3, as the boot ROM sets them. */
+    gpio_config(GPIOA_BASE,  9, GPIO_MODE_AF, GPIO_PULL_UP, 3u, UART_AF);
+    gpio_config(GPIOA_BASE, 10, GPIO_MODE_AF, GPIO_PULL_UP, 3u, UART_AF);
 }
 
 static void uart_putc_block(uint32_t base, uint8_t c)

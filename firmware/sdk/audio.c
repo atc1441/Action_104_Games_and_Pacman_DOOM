@@ -155,39 +155,10 @@ void audio_init(void)
     TIM1_ARR   = TIM1_ARR_VAL;
     TIM1_CCR1  = 0;
 
-    /*
-     * Put PA6 and PA7 into analog mode - that is how the stock firmware
-     * leaves them. What they carry in the audio path is not established.
-     *
-     * This matters because lcd_gpio_init() drives PA6 back to input as a
-     * side effect of its MODER mask. With the pin left as an input the
-     * DMA runs, the block counter advances, and the speaker stays silent
-     * apart from coupling noise - which is exactly what was heard.
-     */
-    {
-        uint32_t m = GPIO_MODER(GPIOA_BASE);
-        m |= (3u << (6 * 2)) | (3u << (7 * 2));      /* 11 = analog */
-        GPIO_MODER(GPIOA_BASE) = m;
-
-        /*
-         * GPIOA +0x1C and +0x28, as the stock firmware has them.
-         *
-         * These are needed: without them the DMA channel arms correctly
-         * and then sits there - source pointer and transfer count frozen,
-         * because TIM1 never raises a request. With them, sound comes
-         * out. In the Aisinochip SDKs +0x1C is AF1 (alternate function
-         * of pins 8-15) and +0x28 is SMIT; which bits matter here is not
-         * established.
-         *
-         * OR rather than assignment on purpose. Overwriting them outright
-         * took the debug port down with it - PA13/PA14 are SWD and sit on
-         * this same port - and a console that makes noise but cannot be
-         * debugged is a poor trade. Merging leaves the existing bits in
-         * place.
-         */
-        REG32(GPIOA_BASE + 0x1C) |= 0x20000114u;
-        REG32(GPIOA_BASE + 0x28) |= 0x00009F3Fu;
-    }
+    /* Route TIM1 channel 1 to the speaker: PA15 as AF2, pull-down,
+     * drive 3, as the stock firmware does. */
+    gpio_config(TIM1_CH1_PORT, TIM1_CH1_PIN, GPIO_MODE_AF, GPIO_PULL_DOWN,
+                3u, TIM1_CH1_AF);
 
     /* Master enable of the DMA controller. Easy to miss: without it the
      * channel registers accept writes and read back correctly, the

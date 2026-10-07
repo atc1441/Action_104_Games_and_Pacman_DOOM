@@ -89,14 +89,29 @@ The layout is identical in both SDKs (`GPIO_TypeDef`).
 | `+0x0C` | input | `IDATA` |
 | `+0x10` | output (assumed) | `ODATA` |
 | `+0x14` | set low 16 / reset high 16 | `BSC` |
-| `+0x18` | written by `uart.c` as AF | `AF0` (pins 0-7) |
-| `+0x1C` | must be set for audio (`0x20000114` on GPIOA) | `AF1` (pins 8-15) |
-| `+0x20` | AFRL (assumed) | `DS0` (drive strength) |
-| `+0x24` | AFRH (assumed) | `DS1` (drive strength) |
-| `+0x28` | must be set for audio (`0x00009F3F` on GPIOA) | `SMIT` |
+| `+0x18` | alternate function, pins 0-7 | `AF0` |
+| `+0x1C` | alternate function, pins 8-15 (PA15 = 2 for audio) | `AF1` |
+| `+0x20` | drive strength, **2 bits per pin, pins 0-15** | `DS0` (4 bits per pin, pins 0-7) |
+| `+0x24` | not used by the stock HAL | `DS1` |
+| `+0x28` | Schmitt input enable | `SMIT` |
 
-In the SDKs the alternate-function registers sit at `+0x18`/`+0x1C`, not at
-the `+0x20`/`+0x24` assumed in `soc.h`. `uart.c` already writes both pairs.
+The stock firmware's `HAL_GPIO_Init` (both the application's and the boot
+ROM's copy, see [HARDWARE.md](HARDWARE.md#gpio)) confirms `AF0`, `AF1` and
+`SMIT` as in the SDKs. It differs on drive strength: it packs 2 bits per pin into `DS0`
+for all 16 pins (`GPIO_DRIVE_LEVEL0..3`), where the G103 SDK uses 4 bits
+per pin across `DS0`/`DS1`. It also has no `AIEN` write.
+
+The user manuals agree with the SDK, not with this chip: ACM32G103 UM
+V2.0 section 8.4.10/8.4.11 and ACM32H5xx UM V1.5 section 10.4.10/10.4.11
+both define `DS0`/`DS1` as 4 bits per pin, pins 0-7 and 8-15, with codes
+`0000`-`0111` for eight drive levels. The disassembly leaves no doubt about
+the stock layout: both HAL copies load `+0x20`, clear `3 << (pin * 2)` for
+pins 0-15 and store it back, and the app HAL rejects drive values above 3.
+The live GPIOA value `0xC03C0000` only makes sense that way: read as
+2-bit fields it is drive 3 on PA9, PA10 and PA15, exactly the three pins
+the stock firmware configures with drive 3. Read as 4-bit fields it would
+put drive codes on PA4, PA5 and PA7, which are an LCD pin set to drive 0,
+an input, and a pin that does not exist.
 
 ### USART
 

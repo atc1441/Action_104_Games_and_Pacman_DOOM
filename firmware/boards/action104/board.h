@@ -40,18 +40,9 @@
 #define LCD_PIN_BL    8         /* backlight, active HIGH */
 
 /*
- * Pin and controller configuration as it stands while the stock firmware
- * runs. Read off the live device, not derived.
- *
- * The alternate-function numbers are why an early attempt hung forever:
- * putting a pin into AF mode is not enough, you also have to say WHICH
- * function. Without AFRL nothing reaches SCK/MOSI and the "TX done" wait
- * loop never finishes.
+ * Controller configuration as it stands while the stock firmware runs.
+ * Read off the live device, not derived. The pins are set up in lcd.c.
  */
-#define BOARD_LCD_MODER      0x00010294u   /* pins 0..5 + PA8 (backlight) */
-#define BOARD_LCD_MODER_MASK 0x00033FFFu
-#define BOARD_LCD_AFRL       0xC03C0000u   /* PA4 -> AF12, PA5 -> AF3     */
-#define BOARD_LCD_PUPDR      0xA5540555u
 #define BOARD_LCD_SPI_MODE   0x00002881u   /* +0x08: bits 0 and 7 required */
 #define BOARD_LCD_SPI_RXCTL  0x00000100u   /* +0x10 bit 8 - the same bit the
                                             * stock SRAM stub sets on the

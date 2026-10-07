@@ -81,14 +81,9 @@
 #define BOARD_LCD_ROT90
 
 /*
- * From the running stock firmware: GPIOA MODER 0xA83DF294 masked to the
- * pins we touch, PUPDR and AFRL verbatim. AFRL is the one real difference
- * from the 104-games board, which has 0xC03C0000 here.
+ * Controller configuration, from the running stock firmware. The pins are
+ * set up in lcd.c.
  */
-#define BOARD_LCD_MODER      0x00013294u
-#define BOARD_LCD_MODER_MASK 0x00033FFFu
-#define BOARD_LCD_AFRL       0xC0000000u
-#define BOARD_LCD_PUPDR      0xA5400555u
 #define BOARD_LCD_SPI_MODE   0x00002881u
 #define BOARD_LCD_SPI_RXCTL  0x00000100u
 

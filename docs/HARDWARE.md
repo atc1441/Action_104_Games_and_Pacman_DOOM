@@ -110,15 +110,44 @@ each offset:
 | Offset | Register | SDK name |
 |---|---|---|
 | `+0x00` | MODER, 2 bits per pin | `MD` |
-| `+0x08` | **PUPDR**, 2 bits per pin, `01` = pull-up (not OSPEEDR) | `PUPD` |
+| `+0x04` | output type, 1 = open drain | `OTYP` |
+| `+0x08` | **PUPDR**, 2 bits per pin, `01` = pull-up, `10` = pull-down (not OSPEEDR) | `PUPD` |
 | `+0x0C` | **IDR** (not `+0x10`) | `IDATA` |
 | `+0x14` | **BSRR**, set in low 16, reset in high 16 (not `+0x18`) | `BSC` |
-| `+0x18` / `+0x1C` | - | `AF0` / `AF1`, alternate function, 4 bits per pin |
-| `+0x20` / `+0x24` | AFRL / AFRH (assumed in `soc.h`, not proven) | `DS0` / `DS1`, drive strength |
-| `+0x28` | - | `SMIT` |
+| `+0x18` / `+0x1C` | alternate function, 4 bits per pin (pins 0-7 / 8-15) | `AF0` / `AF1` |
+| `+0x20` | drive strength, **2 bits per pin, all 16 pins** | `DS0` |
+| `+0x24` | never written by the stock HAL | `DS1` |
+| `+0x28` | Schmitt input enable, 1 bit per pin | `SMIT` |
 
-In the Aisinochip SDKs the alternate-function registers are at
-`+0x18`/`+0x1C`. `firmware/sdk/uart.c` writes the AF value to both pairs.
+The stock firmware's own `HAL_GPIO_Init` (104 Games `0x08004B20`, boot ROM
+`0x00001FEC`) gives the offsets from `+0x18` onwards. It writes the AF
+number at `+0x18`/`+0x1C` (AF mode only), drive strength and output type
+(output and AF modes), pull, then ORs the pin into `SMIT`, and writes the
+mode last. The drive field is 2 bits per pin in `+0x20`. The G103 and H5
+SDKs and user manuals use 4 bits per pin over `DS0`/`DS1`, so this is one
+place where the chip differs from both parts (details in
+[SOC_IDENTIFICATION.md](SOC_IDENTIFICATION.md#gpio)). `gpio_config()` in
+`firmware/sdk/soc.h` does the same steps for a single pin.
+
+The init structure is `{Pin mask, Mode, Pull, Drive, Alternate}`, with the
+SDK's mode values (`2` = AF push-pull, `0x12` = AF open drain). The HAL's
+parameter check also gives the bonded pins: GPIOA `0xFF3F` (**no PA6 or
+PA7**), GPIOB `0x00FF`, GPIOC `0xE1FF`.
+
+Every pin the stock 104 Games firmware configures:
+
+| Pins | Mode | Pull | Drive | AF | Use |
+|---|---|---|---|---|---|
+| PA3, PA4 | AF | up | 0 | 0 | LCD SPI1 SCK, MOSI |
+| PA1, PA2 | out | up | 0 | | LCD DC, CS |
+| PA8 | out | none | 0 | | backlight (PAC-MAN: panel reset) |
+| PA9, PA10 | AF | up | 3 | 1 | USART1 (PA11/PA12 too if flow control is on) |
+| PA15 | AF | down | 3 | 2 | **TIM1 channel 1, the speaker** |
+| PA5, PC13-15 | in | up | | | battery sense |
+| PA0/11/12, PB0-7, PC6/7/8/13 | in | up | | | buttons |
+
+The boot ROM puts USART2 on PB0/PB1 the same way as USART1: AF 1, pull-up,
+drive 3.
 
 The PUPDR offset in particular cost real time: with OSPEEDR assumed there,
 input init never enabled a pull-up, every input floated, and pressing a
@@ -434,12 +463,10 @@ stalled; the self-loop is what actually runs.
 
 Two smaller findings worth keeping:
 
-* GPIOA `+0x1C` and `+0x28` have to be set (the stock has `0x20000114`
-  and `0x00009F3F`). Without them the channel arms and then sits there,
-  because TIM1 never raises a request. Writing them by assignment
-  rather than OR takes the debug port down - PA13/PA14 are SWD on the
-  same port. In the Aisinochip SDKs these offsets are `AF1` (alternate
-  function for pins 8-15, which include PA13/PA14) and `SMIT`.
+* PA15 has to be TIM1's output: AF mode, alternate function 2, pull-down,
+  drive 3. Both stock firmwares configure it so right after the TIM1
+  setup. Writing whole GPIOA registers takes the debug port down
+  (PA13/PA14 are SWD), so `gpio_config()` only touches the one pin.
 * The engine side is done: GBADoom's `i_audio.c` is GBA/Maxmod only, so
   `i_sound_console.c` replaces it with an eight-channel mixer reading the
   `DS*` lumps straight out of XIP flash.
