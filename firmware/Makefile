@@ -2,8 +2,7 @@
 #
 #   make                     build for the default board (action104)
 #   make BOARD=pacman        build for another board
-#   make CLOCK_BOOST=0       stay at ~61 MHz (no PLL switch, SWD stays usable);
-#                            debug image only, its sound stutters
+#   make CLOCK_BOOST=0       stay at ~61 MHz (no PLL switch, SWD stays usable)
 #   make clean
 #
 # Output lands in build/<board>/doom.bin (build/<board>-61mhz/ without boost)

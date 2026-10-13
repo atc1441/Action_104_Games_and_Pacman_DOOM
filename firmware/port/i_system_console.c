@@ -34,7 +34,6 @@
 #include "hostbox.h"
 #include "clock.h"
 #include "board.h"
-#include "audio.h"
 #include "uart.h"
 
 /* ------------------------------------------------------------------ *
@@ -265,8 +264,6 @@ void I_TimerInit_console(uint32_t core_hz)
 int I_GetTime_e32(void)
 {
     uint32_t now = DWT_CYCCNT;
-
-    audio_service();
 
     acc_cyc += (uint32_t)(now - last_cyc);   /* wrapping is correct here */
     last_cyc = now;

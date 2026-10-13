@@ -214,8 +214,7 @@ the abstract. Three things all have to be true:
 
 A 61 MHz image (`make CLOCK_BOOST=0`, output in `build/<board>-61mhz/`) is
 the fallback if a boost flash goes wrong: no source switch, so SWD stays
-attachable. It is a debug image: its sound stutters (see
-[Sample rate](#sample-rate)).
+attachable.
 
 ## Display
 
@@ -440,12 +439,12 @@ assuming 14,016 Hz expected, i.e. 44.6 kHz.
 `audio_rate()` gives the mixer the resulting rate: 44,591 Hz at 194 MHz
 (`PSC` = 16), about 47.8 kHz at 61 MHz (`PSC` = 4).
 
-The mixer refills a buffer only when the engine calls `I_GetTime`, i.e.
-between frames. A 737-sample buffer lasts 16.5 ms at 194 MHz and 15.4 ms
-at 61 MHz. At 194 MHz frames are short enough; at 61 MHz they are not, so
-the DMA replays a buffer before it is refilled and every sound is chopped
-and stretched. A recording of the 61 MHz image repeats itself every
-15.2 ms. Sound at 61 MHz is therefore not supported.
+The SysTick interrupt checks every 2 ms whether the DMA has moved on to
+the other buffer, and refills the idle one. A 737-sample buffer lasts
+16.5 ms at 194 MHz and 15.4 ms at 61 MHz, less than a frame takes at
+61 MHz, so the refill cannot wait for the game loop: a late refill makes
+the DMA replay the old buffer. Recordings of both images play the sounds
+at the right speed with no replayed buffers.
 
 ### Where it stands
 

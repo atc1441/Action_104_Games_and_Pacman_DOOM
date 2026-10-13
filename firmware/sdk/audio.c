@@ -39,6 +39,9 @@
 
 #define AUDIO_TARGET_HZ 44100u
 
+/* Refill check rate. A buffer lasts ~16 ms, so 2 ms leaves ample margin. */
+#define AUDIO_TICK_HZ   500u
+
 /*
  * DMA channel 0. The control word's low half is the remaining transfer
  * count (counts down while playing). Reload value from the stock
@@ -86,6 +89,8 @@ static uint32_t blocks;
 static int      running;
 static uint32_t tim1_psc;
 static uint32_t rate_hz;
+
+static void audio_service(void);
 
 uint32_t audio_blocks(void) { return blocks; }
 uint32_t audio_rate(void)   { return rate_hz; }
@@ -209,25 +214,31 @@ void audio_init(void)
     TIM1_CCER  = TIM_CCER_CC1E;
 
     running = 1;
+
+    /* Lowest priority, so any interrupt added later preempts the mixer. */
+    SCB_SHPR3 |= 0xFFu << 24;
+    SYST_RVR = g_cpu_hz / AUDIO_TICK_HZ - 1u;
+    SYST_CVR = 0;
+    SYST_CSR = SYST_CSR_CLKSOURCE | SYST_CSR_TICKINT | SYST_CSR_ENABLE;
+}
+
+void SysTick_Handler(void)
+{
+    audio_service();
 }
 
 /*
- * Called from I_GetTime_e32(), which the engine hits in tight loops - see
- * the note there. Polling rather than an interrupt keeps this out of the
- * vector table entirely, which matters because the IRQ numbering of this
- * SoC is not established either.
+ * Runs in the SysTick interrupt, every 2 ms. The refill does not depend
+ * on how long the game takes to render a frame: a buffer lasts ~16 ms,
+ * and a refill that comes too late makes the DMA replay the old one.
  *
  * The switch is detected from the DMA's source pointer, not from a status
  * flag. Once the channel reloads itself through DMA_CH_NEXT the "done"
- * bit in DMA_STATUS never turns up - it stayed at zero through a six
- * second measurement while the channel was demonstrably streaming. The
- * read pointer, on the other hand, says plainly which buffer is being
- * played, and that is all the information a double buffer needs.
- *
- * Symptom when this is wrong: one buffer repeats forever, which comes out
- * of the speaker as a steady high whistle rather than silence.
+ * bit in DMA_STATUS stays at zero while the channel streams. The read
+ * pointer says which buffer is being played, which is all a double buffer
+ * needs.
  */
-void audio_service(void)
+static void audio_service(void)
 {
     if (!running) return;
 

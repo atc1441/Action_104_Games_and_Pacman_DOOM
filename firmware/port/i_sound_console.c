@@ -36,15 +36,24 @@ static uint32_t out_rate;
 
 #define NUM_CHANNELS 8
 
-/* 16.16 fixed point position, so a sound of any rate resamples to ours */
+/*
+ * 16.16 fixed point position, so a sound of any rate resamples to ours.
+ *
+ * audio_fill() runs in the SysTick interrupt and I_StartSound() in the
+ * game, which the interrupt can preempt. A channel is only read while
+ * `active` is set, and I_StartSound() clears it before rewriting the
+ * other fields and sets it last, with compiler barriers in between.
+ */
 typedef struct {
     const uint8_t *data;      /* points into XIP flash */
     uint32_t       len;       /* samples */
     uint32_t       pos;       /* 16.16 */
     uint32_t       step;      /* 16.16 increment per output sample */
     int            vol;       /* 0..127 as DOOM hands it over */
-    int            active;
+    volatile int   active;
 } chan_t;
+
+#define COMPILER_BARRIER() __asm volatile ("" ::: "memory")
 
 static chan_t chans[NUM_CHANNELS];
 static int    sound_ready;
@@ -99,11 +108,13 @@ int I_StartSound(int id, int channel, int vol, int sep)
 
     chan_t *c = &chans[channel];
     c->active = 0;                  /* stop before rewriting the fields */
+    COMPILER_BARRIER();
     c->data = p + 8;
     c->len  = count;
     c->pos  = 0;
     c->step = (rate << 16) / out_rate;
     c->vol  = vol;
+    COMPILER_BARRIER();
     c->active = 1;
 
     return channel;

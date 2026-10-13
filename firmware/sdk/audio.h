@@ -16,17 +16,13 @@
  * (741 halfwords) but the descriptor reload count is 0x2E1 = 737. */
 #define AUDIO_BUF_SAMPLES 737
 
-/* Bring TIM1 and DMA up and start streaming. Safe to call once. */
+/* Bring TIM1 and DMA up and start streaming. Safe to call once. From
+ * then on the SysTick interrupt refills the buffers. */
 void audio_init(void);
-
-/* Hand the idle buffer to the mixer if the DMA has finished with it.
- * Must be called far more often than once per buffer - see the comment in
- * audio.c about where it is called from. Cheap when there is nothing to
- * do: one register read. */
-void audio_service(void);
 
 /*
  * Supplied by the mixer (port/i_sound_console.c). Fills n samples.
+ * Runs in the SysTick interrupt.
  *
  * Values are unsigned, 0..255 with 128 as silence, which is what the
  * stock firmware feeds TIM1. 255 is TIM1's ARR, so that is the full

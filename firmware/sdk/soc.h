@@ -310,5 +310,13 @@ static inline void gpio_config(uint32_t port, uint32_t pin, uint32_t mode,
 #define DWT_CYCCNT   REG32(0xE0001004u)
 #define DWT_CTRL     REG32(0xE0001000u)
 #define DEMCR        REG32(0xE000EDFCu)
+#define SCB_SHPR3    REG32(0xE000ED20u)   /* bits 31:24 SysTick priority */
+
+#define SYST_CSR     REG32(0xE000E010u)
+#define SYST_RVR     REG32(0xE000E014u)   /* 24-bit reload value       */
+#define SYST_CVR     REG32(0xE000E018u)
+#define SYST_CSR_ENABLE     (1u << 0)
+#define SYST_CSR_TICKINT    (1u << 1)
+#define SYST_CSR_CLKSOURCE  (1u << 2)    /* core clock                 */
 
 #endif /* SOC_H */
