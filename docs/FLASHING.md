@@ -125,6 +125,7 @@ cd tools
 python rescue.py --write ../firmware/build/action104/doom.bin --addr 0x08004000
 # CMSIS-DAP:
 python rescue_openocd.py --write ../firmware/build/action104/doom.bin --addr 0x08004000
+# add --serial <probe serial> if several CMSIS-DAP probes are plugged in
 ```
 
 Start it, then interrupt the console's power repeatedly - pull a battery,
