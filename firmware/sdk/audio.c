@@ -15,13 +15,15 @@
  * duty cycle in CCR1 takes 256 steps, and a DMA request on every CC1
  * event, i.e. one 8-bit sample per timer period.
  *
- * The sample rate follows from that: f_TIM / ((PSC + 1) * (ARR + 1)).
- * The timer clock itself is not established - the RCC of this SoC does
- * not match either SDK - so audio_blocks() still exists to measure the
- * rate from the host instead of assuming it; see docs/HARDWARE.md.
+ * The sample rate, which is also the PWM carrier frequency, follows from
+ * that: f_TIM / ((PSC + 1) * (ARR + 1)). PSC is computed from the clock
+ * the way the stock firmware does it, aiming at 44.1 kHz, so the carrier
+ * stays above hearing at any core clock. audio_rate() reports the
+ * resulting rate to the mixer.
  */
 
 #include "audio.h"
+#include "clock.h"
 #include "soc.h"
 
 /*
@@ -33,8 +35,9 @@
 #define TIM1_SR_VAL     (TIM_SR_CC1IF | TIM_SR_UIF)             /* 0x03  */
 #define TIM1_EGR_VAL    0x00000000u
 #define TIM1_CCMR1_VAL  (TIM_CCMR1_OC1M_PWM1 | TIM_CCMR1_OC1PE) /* 0x68  */
-#define TIM1_PSC_VAL    16u        /* timer clock / 17                  */
 #define TIM1_ARR_VAL    255u       /* period of 256: 8-bit duty cycle   */
+
+#define AUDIO_TARGET_HZ 44100u
 
 /*
  * DMA channel 0. The control word's low half is the remaining transfer
@@ -81,8 +84,35 @@ static dma_desc_t desc __attribute__((aligned(32)));
 static unsigned playing;          /* index of the buffer the DMA is on */
 static uint32_t blocks;
 static int      running;
+static uint32_t tim1_psc;
+static uint32_t rate_hz;
 
 uint32_t audio_blocks(void) { return blocks; }
+uint32_t audio_rate(void)   { return rate_hz; }
+
+/*
+ * TIM1 clock, as the stock firmware derives it: the core clock divided by
+ * the APB prescaler in RCC+0x20 bits 13:11 (4 = /2 ... 7 = /16), and
+ * doubled whenever that prescaler divides.
+ */
+static uint32_t tim1_clock_hz(void)
+{
+    const uint32_t ppre = (REG32(RCC_BASE + 0x20) >> 11) & 7u;
+
+    if (ppre < 4u)
+        return g_cpu_hz;
+    return (g_cpu_hz >> (ppre - 3u)) << 1;
+}
+
+/* PSC for AUDIO_TARGET_HZ, rounded to nearest: 16 at 194 MHz, which is
+ * the value the stock firmware runs with. */
+static uint32_t tim1_psc_for(uint32_t tim_hz)
+{
+    const uint32_t period = AUDIO_TARGET_HZ * (TIM1_ARR_VAL + 1u);
+    const uint32_t div = (tim_hz + period / 2u) / period;
+
+    return div ? div - 1u : 0u;
+}
 
 static void desc_set_src(unsigned idx)
 {
@@ -101,7 +131,7 @@ static void dma_start(unsigned play)
     desc.next     = (uint32_t)(uintptr_t)&desc;
     desc.ctrl     = DMA_CTRL_HI | AUDIO_BUF_SAMPLES;
     desc.tim_base = TIM1_BASE;
-    desc.w14      = TIM1_PSC_VAL;
+    desc.w14      = tim1_psc;
     desc.w18      = TIM1_ARR_VAL;
     desc.w1c      = 1;
 
@@ -116,6 +146,10 @@ static void dma_start(unsigned play)
 void audio_init(void)
 {
     if (running) return;
+
+    const uint32_t tim_hz = tim1_clock_hz();
+    tim1_psc = tim1_psc_for(tim_hz);
+    rate_hz  = tim_hz / ((tim1_psc + 1u) * (TIM1_ARR_VAL + 1u));
 
     /*
      * Clocks.
@@ -151,7 +185,7 @@ void audio_init(void)
     TIM1_CCMR1 = TIM1_CCMR1_VAL;
     /* CNT (+0x24) is the timer counter, live while playing (Forest Kid:
      * it kept changing with the CPU halted). Do not treat 0x89 as config. */
-    TIM1_PSC   = TIM1_PSC_VAL;
+    TIM1_PSC   = tim1_psc;
     TIM1_ARR   = TIM1_ARR_VAL;
     TIM1_CCR1  = 0;
 

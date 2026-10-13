@@ -35,10 +35,12 @@ void audio_service(void);
  */
 void audio_fill(uint16_t *dst, unsigned n);
 
+/* Output sample rate in Hz, valid after audio_init(): ~44.1 kHz, the
+ * exact value depends on the core clock. */
+uint32_t audio_rate(void);
+
 /* Buffers completed since audio_init(). Multiply by AUDIO_BUF_SAMPLES and
- * divide by elapsed seconds to measure the real output rate. It is
- * f_TIM / 4352, but the TIM1 clock is not known from the register map,
- * only by measurement. */
+ * divide by elapsed seconds to measure the output rate on the device. */
 uint32_t audio_blocks(void);
 
 #endif /* AUDIO_H */

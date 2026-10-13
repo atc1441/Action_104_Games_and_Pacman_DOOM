@@ -27,22 +27,12 @@
 #include "audio.h"
 #include "input.h"
 
-const int snd_samplerate = 14016;
-
 /*
- * Output rate, measured rather than assumed: audio_blocks() counts
- * completed DMA blocks, and 741 samples per block over 12 seconds gave
- * 14016 Hz (a 3-second run gave 14071, so it is stable). Forest Kid's
- * live descriptor reloads 737 samples; the TIM1 setup is unchanged, so
- * the rate stands until it is measured again.
- *
- * TIM1 requests one sample per period, so the rate is
- * f_TIM / ((PSC + 1) * (ARR + 1)) = f_TIM / 4352; 14016 Hz corresponds
- * to a 61.0 MHz timer clock. That clock is not established from the
- * register map, so this number comes from the stopwatch, not the
- * datasheet. If you change PSC, ARR or the clock tree, measure it again.
+ * Output rate, set from audio_rate() at init. TIM1 requests one sample per
+ * PWM period and the driver picks the period for ~44.1 kHz, so the exact
+ * rate depends on the core clock.
  */
-#define OUT_RATE 14016u
+static uint32_t out_rate;
 
 #define NUM_CHANNELS 8
 
@@ -112,7 +102,7 @@ int I_StartSound(int id, int channel, int vol, int sep)
     c->data = p + 8;
     c->len  = count;
     c->pos  = 0;
-    c->step = (rate << 16) / OUT_RATE;
+    c->step = (rate << 16) / out_rate;
     c->vol  = vol;
     c->active = 1;
 
@@ -150,8 +140,8 @@ void audio_fill(uint16_t *dst, unsigned n)
     static unsigned variant;
     static unsigned phase;
 
-    const uint32_t tone    = OUT_RATE * 2u;
-    const uint32_t silence = OUT_RATE / 2u;
+    const uint32_t tone    = out_rate * 2u;
+    const uint32_t silence = out_rate / 2u;
 
     for (unsigned i = 0; i < n; i++) {
         if (t >= tone + silence) { t = 0; variant = (variant + 1) % 5; }
@@ -167,7 +157,7 @@ void audio_fill(uint16_t *dst, unsigned n)
                 default: v = 0x8000; break;
             }
         } else {
-            const uint32_t half = OUT_RATE / (2u * st_hz[variant]);
+            const uint32_t half = out_rate / (2u * st_hz[variant]);
             phase++;
             if (phase >= 2u * half) phase = 0;
             const int high = phase < half;
@@ -239,9 +229,10 @@ void I_InitSound(void)
     for (unsigned i = 0; i < NUM_CHANNELS; i++) chans[i].active = 0;
 
     audio_init();
+    out_rate = audio_rate();
     sound_ready = 1;
 
-    lprintf(LO_INFO, "I_InitSound: TIM1 PWM ready");
+    lprintf(LO_INFO, "I_InitSound: TIM1 PWM at %lu Hz", (unsigned long)out_rate);
 }
 
 /*

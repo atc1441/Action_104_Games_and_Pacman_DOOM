@@ -2,9 +2,11 @@
 #
 #   make                     build for the default board (action104)
 #   make BOARD=pacman        build for another board
+#   make CLOCK_BOOST=0       stay at ~61 MHz (no PLL switch, SWD stays usable);
+#                            debug image only, its sound stutters
 #   make clean
 #
-# Output lands in build/<board>/doom.bin
+# Output lands in build/<board>/doom.bin (build/<board>-61mhz/ without boost)
 #
 # Set CROSS to your arm-none-eabi prefix if it is not on PATH:
 #   make CROSS=/path/to/arm-none-eabi-
@@ -14,6 +16,7 @@
 #   python ../tools/flash.py write ../wad/doom1_e1m1_sfx.wad 0x08090000 --leave-halted
 
 BOARD  ?= action104
+CLOCK_BOOST ?= 1
 CROSS  ?= arm-none-eabi-
 
 CC      = $(CROSS)gcc
@@ -24,9 +27,15 @@ GBA     = GBADoom
 SDK     = sdk
 PORT    = port
 BOARDIR = boards/$(BOARD)
-# Per board, so that switching BOARD really rebuilds instead of
-# silently reusing the other board's objects.
+# Per board and clock, so that switching either really rebuilds instead
+# of silently reusing the other configuration's objects.
+ifeq ($(CLOCK_BOOST),1)
 BUILD   = build/$(BOARD)
+BOOST   = -DENABLE_CLOCK_BOOST
+else
+BUILD   = build/$(BOARD)-61mhz
+BOOST   =
+endif
 
 # The core is a STAR-MC1: ARMv8-M Mainline, Cortex-M33 compatible.
 # Soft float on purpose - the FPU is enabled but DOOM does not need it.
@@ -37,7 +46,7 @@ CFLAGS  = $(ARCH) -std=gnu11 -O2 -g3 -ffreestanding \
           -Wall -Wno-switch-outside-range -Wno-unused -Wno-sign-compare \
           -Wno-incompatible-pointer-types \
           -I$(GBA)/include -I$(SDK) -I$(PORT) -I$(BOARDIR) \
-          -DENABLE_CLOCK_BOOST
+          $(BOOST)
 
 LDFLAGS = $(ARCH) -nostartfiles --specs=nano.specs --specs=nosys.specs \
           -Wl,--gc-sections -Wl,-Map,$(BUILD)/doom.map

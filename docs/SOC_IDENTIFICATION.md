@@ -188,8 +188,9 @@ This explains three things that were open questions:
   counter.
 * **The sample rate comes from the timer clock.** One DMA request per timer
   period gives a rate of `f_TIM / ((PSC + 1) * (ARR + 1))`, which is
-  `f_TIM / 4352` (the SDK examples set both registers as "value - 1"). The measured 14,016 Hz corresponds to a 61.0 MHz timer
-  clock. `+0x18` is `CCMR1`, not a divider.
+  `f_TIM / 4352` with the stock `PSC` = 16 (the SDK examples set both
+  registers as "value - 1"): 44.6 kHz at the stock 194 MHz. `+0x18` is
+  `CCMR1`, not a divider.
 
 ## Where the SoC matches neither part
 

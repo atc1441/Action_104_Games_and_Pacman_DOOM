@@ -212,9 +212,10 @@ the abstract. Three things all have to be true:
    MEM-AP even if the CPU is halted. Flash with `--leave-halted` and
    power-cycle with the probe idle. Attach is safe *after* the switch.
 
-A 61 MHz image (build without `-DENABLE_CLOCK_BOOST` in the Makefile) is
+A 61 MHz image (`make CLOCK_BOOST=0`, output in `build/<board>-61mhz/`) is
 the fallback if a boost flash goes wrong: no source switch, so SWD stays
-attachable.
+attachable. It is a debug image: its sound stutters (see
+[Sample rate](#sample-rate)).
 
 ## Display
 
@@ -417,11 +418,34 @@ stock firmware while it was playing:
   nasty: with it clear, the channel registers accept writes, read back
   correctly, and report the channel as enabled - and nothing moves.
 
-The output rate is **~14 kHz**, measured by counting completed DMA blocks
-(741 samples each) over 12 seconds. TIM1 requests one sample per period,
-so the rate is `f_TIM / ((PSC + 1) * (ARR + 1))` = `f_TIM / 4352`: the
-measured 14,016 Hz corresponds to a 61.0 MHz timer clock. `+0x18` is
-`CCMR1`, not a divider.
+### Sample rate
+
+TIM1 requests one sample per PWM period, so the sample rate and the PWM
+carrier are the same frequency: `f_TIM / ((PSC + 1) * (ARR + 1))`. `+0x18`
+is `CCMR1`, not a divider.
+
+The timer clock is the core clock, run through the APB prescaler in
+`RCC+0x20` bits 13:11 (`4` = /2 ... `7` = /16) and doubled whenever that
+prescaler divides. The PAC-MAN stock audio init computes it that way and
+sets `PSC = round(f_TIM / (44100 * 256)) - 1`, aiming at 44.1 kHz so the
+carrier stays inaudible. At 194 MHz that gives `PSC` = 16, the value the
+104 Games stock firmware runs with: 44,591 Hz.
+
+Two measurements agree. At the ~61 MHz of `CLOCK_BOOST=0`, `PSC` = 16
+gave 14,016 Hz by counting DMA blocks, i.e. a 61.0 MHz timer clock. At
+194 MHz, a recording of the pistol played 3.18 times faster than a mixer
+assuming 14,016 Hz expected, i.e. 44.6 kHz.
+
+`firmware/sdk/audio.c` computes `PSC` the same way at start-up and
+`audio_rate()` gives the mixer the resulting rate: 44,591 Hz at 194 MHz
+(`PSC` = 16), about 47.8 kHz at 61 MHz (`PSC` = 4).
+
+The mixer refills a buffer only when the engine calls `I_GetTime`, i.e.
+between frames. A 737-sample buffer lasts 16.5 ms at 194 MHz and 15.4 ms
+at 61 MHz. At 194 MHz frames are short enough; at 61 MHz they are not, so
+the DMA replays a buffer before it is refilled and every sound is chopped
+and stretched. A recording of the 61 MHz image repeats itself every
+15.2 ms. Sound at 61 MHz is therefore not supported.
 
 ### Where it stands
 
@@ -438,8 +462,7 @@ What was proven along the way:
 * sound does come out - one build produced a loud tone through the
   speaker, so the whole path from RAM to speaker is real
 * the mixer receives sounds correctly: a menu blip arrived with the right
-  length and a resampling step of `0xC95E`, which is exactly
-  11025/14016
+  length and the resampling step for 11025 Hz source data
 
 The reload mechanism is one **8-word self-looping descriptor**. Forest
 Kid live at `0x20044BA0`:
