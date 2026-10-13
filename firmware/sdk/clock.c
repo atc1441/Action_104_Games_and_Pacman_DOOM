@@ -32,7 +32,7 @@
  */
 uint32_t g_cpu_hz = 16000000u;
 
-#define CPU_HZ_BASE   61200000u    /* measured after clock_init()          */
+#define CPU_HZ_BASE   62200000u    /* measured after clock_init()          */
 #define CPU_HZ_PLL    194063312u   /* Fref 15,525,065 Hz * 50 / 4          */
 
 /*
@@ -132,7 +132,7 @@ void clock_init(void)
  * clock_boost() matches stock app_board_init (0x0802AA70 / 0x0802AD96):
  * a .ramfunc ORs 0x100 into MPI +0x10 (and keeps divider 2), then the
  * rest runs from flash — the same split as stock. OSC bit 3 is set again
- * before lock (SystemInit cleared it for 61 MHz). After source=3, R20
+ * before lock (SystemInit cleared it for 62 MHz). After source=3, R20
  * bits[3:0] and [7:4] are cleared with a ready wait each, then bits[13:8]
  * are set to 0x24 (live stock R20 = 0x80002400). Do not attach SWD across
  * the source switch; it desyncs MEM-AP. Flash with --leave-halted and
@@ -176,12 +176,12 @@ int clock_boost(void)
 {
     MARK = 1; MARKV = RCC_R48;
 
-    /* MPI first, while still at 61 MHz, matching stock's RAM stub then PLL. */
+    /* MPI first, while still at 62 MHz, matching stock's RAM stub then PLL. */
     __asm volatile ("cpsid i" ::: "memory");
     mpi_retune_for_pll();
 
     /* Stock app_board_init: (OSC & ~8) | 9, wait bit 4. SystemInit cleared
-     * bit 3 for the 61 MHz switch; PLL lock is gated on (OSC & 0x19)==0x19. */
+     * bit 3 for the 62 MHz switch; PLL lock is gated on (OSC & 0x19)==0x19. */
     MARK = 2;
     RCC_OSC = (RCC_OSC & ~OSC_BIT3) | OSC_ON | OSC_BIT3;
     short_delay();

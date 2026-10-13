@@ -212,7 +212,7 @@ the abstract. Three things all have to be true:
    MEM-AP even if the CPU is halted. Flash with `--leave-halted` and
    power-cycle with the probe idle. Attach is safe *after* the switch.
 
-A 61 MHz image (`make CLOCK_BOOST=0`, output in `build/<board>-61mhz/`) is
+A 62 MHz image (`make CLOCK_BOOST=0`, output in `build/<board>-62mhz/`) is
 the fallback if a boost flash goes wrong: no source switch, so SWD stays
 attachable.
 
@@ -430,19 +430,27 @@ sets `PSC = round(f_TIM / (44100 * 256)) - 1`, aiming at 44.1 kHz so the
 carrier stays inaudible. At 194 MHz that gives `PSC` = 16, the value the
 104 Games stock firmware runs with: 44,591 Hz.
 
-Two measurements agree. At the ~61 MHz of `CLOCK_BOOST=0`, `PSC` = 16
-gave 14,016 Hz by counting DMA blocks, i.e. a 61.0 MHz timer clock. At
-194 MHz, a recording of the pistol played 3.18 times faster than a mixer
-assuming 14,016 Hz expected, i.e. 44.6 kHz.
-
 `firmware/sdk/audio.c` computes `PSC` the same way at start-up and
 `audio_rate()` gives the mixer the resulting rate: 44,591 Hz at 194 MHz
-(`PSC` = 16), about 47.8 kHz at 61 MHz (`PSC` = 4).
+(`PSC` = 16), 40,494 Hz at 62.2 MHz (`PSC` = 5).
+
+Both clocks were checked against recordings of the speaker, timed by the
+recorder's own clock and compared with the pistol sound (`DSPISTOL`) from
+the WAD:
+
+* At 194 MHz the pistol plays at exactly the expected speed (best fit
+  x1.000 in 0.002 steps), which also shows the recorder's clock is
+  accurate.
+* At the clock of `CLOCK_BOOST=0` it played 1.018 times too fast when the
+  firmware assumed 61.2 MHz, and a run whose buffers were replayed
+  repeated every 15.17 ms (737 samples at `PSC` = 4). Both give a core
+  clock of about 62.2 MHz, the value `CPU_HZ_BASE` in
+  `firmware/sdk/clock.c` uses.
 
 The SysTick interrupt checks every 2 ms whether the DMA has moved on to
 the other buffer, and refills the idle one. A 737-sample buffer lasts
-16.5 ms at 194 MHz and 15.4 ms at 61 MHz, less than a frame takes at
-61 MHz, so the refill cannot wait for the game loop: a late refill makes
+16.5 ms at 194 MHz and 18.2 ms at 62 MHz, less than a frame takes at
+62 MHz, so the refill cannot wait for the game loop: a late refill makes
 the DMA replay the old buffer. Recordings of both images play the sounds
 at the right speed with no replayed buffers.
 

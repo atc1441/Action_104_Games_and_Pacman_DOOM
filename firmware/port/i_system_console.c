@@ -243,12 +243,12 @@ void I_ClearWindow_e32(void)     { lcd_fill(0x0000); }
  * 32 bits, and the while loop normally runs zero or one times.
  *
  * The counter is 32 bits wide and wraps after about 22 seconds at 194 MHz
- * (about 70 seconds at 61 MHz), which is exactly why this accumulates
+ * (about 69 seconds at 62 MHz), which is exactly why this accumulates
  * instead of dividing the absolute value.
  * ------------------------------------------------------------------ */
 #define TICRATE_HZ 35u
 
-static uint32_t cycles_per_tic = 61200000u / TICRATE_HZ;
+static uint32_t cycles_per_tic = 62200000u / TICRATE_HZ;
 static uint32_t last_cyc;
 static uint32_t acc_cyc;
 static int      tic_count;

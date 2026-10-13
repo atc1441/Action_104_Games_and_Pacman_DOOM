@@ -2,10 +2,10 @@
 #
 #   make                     build for the default board (action104)
 #   make BOARD=pacman        build for another board
-#   make CLOCK_BOOST=0       stay at ~61 MHz (no PLL switch, SWD stays usable)
+#   make CLOCK_BOOST=0       stay at ~62 MHz (no PLL switch, SWD stays usable)
 #   make clean
 #
-# Output lands in build/<board>/doom.bin (build/<board>-61mhz/ without boost)
+# Output lands in build/<board>/doom.bin (build/<board>-62mhz/ without boost)
 #
 # Set CROSS to your arm-none-eabi prefix if it is not on PATH:
 #   make CROSS=/path/to/arm-none-eabi-
@@ -32,7 +32,7 @@ ifeq ($(CLOCK_BOOST),1)
 BUILD   = build/$(BOARD)
 BOOST   = -DENABLE_CLOCK_BOOST
 else
-BUILD   = build/$(BOARD)-61mhz
+BUILD   = build/$(BOARD)-62mhz
 BOOST   =
 endif
 
