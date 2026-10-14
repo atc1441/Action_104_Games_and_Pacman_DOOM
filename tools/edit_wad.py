@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-Add maps from the shareware IWAD to a GBADoom WAD.
+Edit a GBADoom WAD: add maps or other lumps from the shareware IWAD, drop
+lumps.
 
-  python add_maps.py --iwad doom1.wad --into ../wad/doom1_e1m1_sfx.wad \\
-                     --maps E1M2 E1M3 --out ../wad/doom1_e1m3_sfx.wad
+  python edit_wad.py --iwad doom1.wad --into ../wad/doom1_e1m1_sfx.wad \\
+                     --maps E1M2 E1M3 --add D_E1M1 --drop 'WILV1*' \\
+                     --out ../wad/out.wad
 
 GBADoom reads the map lumps in place from flash, so they have to be in the
 layout GbaWadUtil (github.com/doomhack/GbaWadUtil, wadprocessor.cpp)
@@ -14,8 +16,13 @@ port of that conversion.
 Before writing anything, every map already present in --into is converted
 from --iwad as well and compared byte for byte, so a conversion that
 drifts from GbaWadUtil stops here instead of on the console.
+
+--add copies lumps from --iwad unchanged and appends them. --drop takes
+names or shell patterns; a map marker or map lump cannot be dropped this
+way, and a pattern that matches nothing is an error.
 """
 import argparse
+import fnmatch
 import os
 import struct
 import sys
@@ -148,7 +155,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--iwad', required=True, help='shareware doom1.wad')
     ap.add_argument('--into', required=True, help='GBADoom WAD to extend')
-    ap.add_argument('--maps', nargs='+', required=True, metavar='ExMy')
+    ap.add_argument('--maps', nargs='+', default=[], metavar='ExMy')
+    ap.add_argument('--add', nargs='+', default=[], metavar='LUMP')
+    ap.add_argument('--drop', nargs='+', default=[], metavar='PATTERN')
     ap.add_argument('--out', required=True)
     args = ap.parse_args()
 
@@ -183,6 +192,31 @@ def main():
               else find_map(dst, present[0]) - 11) + 11
         dst[at:at] = [(name, b'')] + [(n, group[n]) for n in MAP_LUMPS]
         print('%s: %d bytes' % (name, sum(len(group[n]) for n in MAP_LUMPS)))
+
+    for pattern in args.drop:
+        in_map = set()
+        for i, (n, _) in enumerate(dst):
+            if is_map_marker(n) and find_map(dst, n) == i:
+                in_map.update(range(i, i + 11))
+        hits = [i for i, (n, _) in enumerate(dst)
+                if fnmatch.fnmatchcase(n, pattern.upper()) and i not in in_map]
+        if not hits:
+            sys.exit('--drop %s: no such lump' % pattern)
+        print('drop %s: %d bytes' % (' '.join(dst[i][0] for i in hits),
+                                     sum(len(dst[i][1]) for i in hits)))
+        for i in reversed(hits):
+            del dst[i]
+
+    have = {n for n, _ in dst}
+    for name in args.add:
+        name = name.upper()
+        if name in have:
+            sys.exit('%s: already in %s' % (name, args.into))
+        blob = next((b for n, b in src if n == name), None)
+        if blob is None:
+            sys.exit('%s: %s not found' % (args.iwad, name))
+        dst.append((name, blob))
+        print('add %s: %d bytes' % (name, len(blob)))
 
     # Every lump 4-byte aligned: the engine reads the converted map lumps
     # as structs, in place.

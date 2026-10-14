@@ -44,6 +44,10 @@ size, the largest map, E1M6, would leave about 30 KB free.
 | `doom1_e1m1.wad` | E1M1 only, as `GbaWadUtil` wrote it, no sound |
 | `doom1_e1m1_sfx.wad` | the same plus the `DS*` lumps |
 | `doom1_e1m3_sfx.wad` | the same plus E1M2 and E1M3 |
+| `doom1_e1m3_music.wad` | the same minus unused lumps, plus the music for E1M1-E1M3 |
+
+`doom1_e1m3_music.wad` is 3,481,192 bytes and leaves 123,288 bytes free.
+The firmware does not play music yet; the WAD works with it as is.
 
 ## Making your own
 
@@ -59,13 +63,51 @@ To put the sounds back, then add maps from a full shareware IWAD
 ```sh
 python tools/merge_sfx.py --iwad doom1.wad --into wad/doom1_e1m1.wad \
     --out wad/doom1_e1m1_sfx.wad
-python tools/add_maps.py --iwad doom1.wad --into wad/doom1_e1m1_sfx.wad \
+python tools/edit_wad.py --iwad doom1.wad --into wad/doom1_e1m1_sfx.wad \
     --maps E1M2 E1M3 --out wad/doom1_e1m3_sfx.wad
+python tools/edit_wad.py --iwad doom1.wad --into wad/doom1_e1m1_sfx.wad \
+    --maps E1M2 E1M3 \
+    --drop HELP1 'WILV1?' 'WILV2?' DEMO1 DEMO3 \
+           'STFB?' 'STPB?' 'WIBP?' WIFRGS WIKILRS WIOSTS WIOSTF \
+           M_RDTHIS M_DISOPT M_MSENS \
+           DMXGUS ENDOOM STCDROM STDISK CREDITS 'STTNUM?' STTMINUS \
+    --add GENMIDI D_INTRO D_E1M1 D_E1M2 D_E1M3 D_INTER \
+    --out wad/doom1_e1m3_music.wad
 ```
 
-`add_maps.py` is a port of the `GbaWadUtil` map conversion. Before it
-writes anything it converts the maps already in `--into` from the IWAD as
-well and stops unless the result is byte for byte what is there.
+`edit_wad.py` does three things:
+
+* `--maps` adds maps with a port of the `GbaWadUtil` map conversion.
+  Before it writes anything it converts the maps already in `--into` from
+  the IWAD as well and stops unless the result is byte for byte what is
+  there.
+* `--add` copies lumps from the IWAD unchanged.
+* `--drop` removes lumps by name or shell pattern. Lumps inside a map are
+  never dropped, and a pattern that matches nothing is an error.
+
+### Music
+
+`--add` puts back what the music needs: `GENMIDI` (11,908 bytes, the OPL2
+instrument patches) and the MUS songs the shareware maps and screens use,
+`D_INTRO` (title), `D_E1M1`-`D_E1M3` and `D_INTER` (stats screen), 103,902
+bytes. Together that is 115,810 bytes.
+
+### Dropped lumps
+
+None of these is read by GBADoom with E1M1-E1M3. Found by searching the
+engine source for each lump name, then checked on the console: title loop,
+every menu page, status bar, and the E1M1 and E1M2 stats screens.
+
+| Lumps | Bytes | Why unused |
+|---|---|---|
+| `HELP1` | 68,168 | GBADoom's title loop and read-this pages show `HELP2` and `CREDIT` only |
+| `WILV1?`, `WILV2?` | 54,944 | level names of episodes 2 and 3, which shareware never reaches |
+| `DEMO1`, `DEMO3` | 28,668 | recorded in E1M5 and E1M7, so they are skipped anyway |
+| `STFB?`, `STPB?`, `WIBP?`, `WIFRGS`, `WIKILRS`, `WIOSTS`, `WIOSTF` | 16,464 | multiplayer status bar and intermission |
+| `M_RDTHIS`, `M_DISOPT`, `M_MSENS` | 10,500 | menu items GBADoom removed |
+| `DMXGUS`, `ENDOOM`, `STCDROM`, `STDISK`, `CREDITS`, `STTNUM?`, `STTMINUS` | 13,520 | DOS-only (GUS setup, exit screen, disk icons), the unused `CREDITS` page `GbaWadUtil` adds, and the status bar digits GBADoom replaced with `STGANUM?` |
+
+That is 192,264 bytes, more than the music adds.
 
 Three engine patches in `firmware/GBADoom/engine-patches.diff` handle a WAD
 that holds only part of the episode. All three do nothing with a full WAD:
