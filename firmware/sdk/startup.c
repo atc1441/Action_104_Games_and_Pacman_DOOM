@@ -42,6 +42,7 @@ void SVC_Handler(void)        ALIAS(Default_Handler);
 void DebugMon_Handler(void)   ALIAS(Default_Handler);
 void PendSV_Handler(void)     ALIAS(Default_Handler);
 void SysTick_Handler(void)    ALIAS(Default_Handler);
+void DMA_CH2_IRQHandler(void) ALIAS(Default_Handler);
 
 /*
  * 16 system vectors + 40 IRQs.
@@ -66,8 +67,9 @@ void (* const g_vectors[16 + NUM_IRQ])(void) = {
     PendSV_Handler,             /* 14                      */
     SysTick_Handler,            /* 15                      */
 
-    /* 40 peripheral IRQs - all to Default_Handler */
+    /* 40 peripheral IRQs - all to Default_Handler but the LCD DMA */
     [16 ... 16 + NUM_IRQ - 1] = Default_Handler,
+    [16 + DMA_CH2_IRQn] = DMA_CH2_IRQHandler,
 };
 
 void Reset_Handler(void)

@@ -510,6 +510,15 @@ SPI `+0x20` = length, `+0x0C` bits `0x1d`, start `+0x24` bit 0, and
 touch channel 0. `lcd.c` `spi_write()` uses this for transfers above 16
 bytes. Audio channel 0 is unchanged.
 
+**Interrupts.** The G103 manual's bits work: CTRL bit 31 (`ITC`) sets the
+channel's bit in `INTTCSTATUS` (`+0x04`) at the end of a transfer, CONFIG
+bit 5 (`ITC`) lets that raise an interrupt, and writing the bit to
+`INTTCCLR` (`+0x08`) acknowledges it. Unlike the G103, which has one DMA1
+interrupt (IRQ 12), each channel has its own: channel 2 raised **IRQ 9**
+and channel 3 **IRQ 10** (a 4-byte memory-to-memory copy started over SWD,
+then NVIC `ISPR0` read). Channels 0 and 1 were not tried. The frame push
+runs from the channel 2 interrupt, one panel row per interrupt.
+
 ### How the stock firmware plays sound
 
 Two ping-pong buffers at `0x20044000` and `0x200445CA` hold 16-bit

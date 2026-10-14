@@ -65,15 +65,16 @@ static void spi_write_cpu(const uint8_t *buf, uint32_t len)
  * touched here. spi_dma_start() returns as soon as the transfer runs;
  * spi_dma_finish() waits for it and tears it down.
  */
-static void spi_dma_start(const uint8_t *buf, uint32_t len)
+static void spi_dma_start(const uint8_t *buf, uint32_t len, int irq)
 {
     SPI_SR(SPI) = (SPI_SR(SPI) & ~2u) | SR_TXDONE;
 
     DMA_CH_NEXT(DMA_CH_LCD) = 0;
     DMA_CH_SRC(DMA_CH_LCD)  = (uint32_t)(uintptr_t)buf;
     DMA_CH_DST(DMA_CH_LCD)  = SPI_LCD_BASE;
-    DMA_CH_CTRL(DMA_CH_LCD) = DMA_LCD_CTRL_HI | len;
-    DMA_CH_CFG(DMA_CH_LCD)  = DMA_LCD_CFG;
+    DMA_CH_CTRL(DMA_CH_LCD) = DMA_LCD_CTRL_HI | len
+                            | (irq ? DMA_CTRL_ITC : 0u);
+    DMA_CH_CFG(DMA_CH_LCD)  = DMA_LCD_CFG | (irq ? DMA_CFG_ITC : 0u);
 
     SPI_CR20(SPI)  = len;
     SPI_CR0C(SPI)  = (SPI_CR0C(SPI) & 0xfffffff6u) | 0x1du;
@@ -95,11 +96,12 @@ static void spi_dma_finish(void)
     SPI_SR(SPI)   |= 0x4002u;
     SPI_CR0C(SPI) &= ~8u;
     SPI_CR24(SPI) &= ~1u;
+    DMA_IRQ_CLR    = 1u << DMA_CH_LCD;
 }
 
 static void spi_write_dma(const uint8_t *buf, uint32_t len)
 {
-    spi_dma_start(buf, len);
+    spi_dma_start(buf, len, 0);
     spi_dma_finish();
 }
 
@@ -164,7 +166,19 @@ void lcd_data_start(const uint8_t *p, uint32_t n)
 {
     GPIO_CLR(LCD_PORT, LCD_PIN_CS);
     GPIO_SET(LCD_PORT, LCD_PIN_DC);      /* HIGH = data */
-    spi_dma_start(p, n);
+    spi_dma_start(p, n, 0);
+}
+
+/*
+ * lcd_data_start() that also raises DMA_CH2_IRQHandler once the DMA has handed
+ * the last byte to the SPI. The handler calls lcd_data_wait(), which then
+ * only waits for the SPI FIFO to drain, and acknowledges the interrupt.
+ */
+void lcd_data_start_irq(const uint8_t *p, uint32_t n)
+{
+    GPIO_CLR(LCD_PORT, LCD_PIN_CS);
+    GPIO_SET(LCD_PORT, LCD_PIN_DC);      /* HIGH = data */
+    spi_dma_start(p, n, 1);
 }
 
 void lcd_data_wait(void)

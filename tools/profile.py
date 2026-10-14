@@ -6,8 +6,11 @@ Where the CPU time goes, read over SWD from a PROFILE=1 build.
   python profile.py ../firmware/build/action104-prof/doom.elf [seconds]
 
 The firmware adds the core cycle counter (DWT_CYCCNT) into a few globals:
-the audio refill interrupt, the frame push to the LCD and, inside it, the
-wait for each SPI transfer, and the engine's wait for the next tic. This
+the audio refill interrupt, the frame push to the LCD (its start and the
+interrupt per row) and, inside it, the wait for each SPI transfer, the
+engine's wait for the push to finish before it draws again, and its wait
+for the next tic. The two waits leave out the interrupts taken meanwhile,
+so the shares add up and the engine share is simply the rest. This
 reads them twice, `seconds` apart (default 3), and prints the shares.
 Reads only, so it is safe on a running console. CYCCNT wraps after
 22 s at 194 MHz, so keep the window shorter than that.
@@ -22,7 +25,7 @@ import time
 import ocd
 
 COUNTERS = ('prof_audio_cyc', 'prof_frames', 'prof_push_cyc',
-            'prof_spi_wait_cyc', 'prof_idle_cyc')
+            'prof_spi_wait_cyc', 'prof_push_wait_cyc', 'prof_idle_cyc')
 DWT_CYCCNT = 0xE0001004
 
 
@@ -58,7 +61,7 @@ def main():
     a = snap()
     time.sleep(args.seconds)
     b = snap()
-    audio, frames, push, spi_wait, idle, cyc = \
+    audio, frames, push, spi_wait, push_wait, idle, cyc = \
         [(y - x) & 0xFFFFFFFF for x, y in zip(a, b)]
 
     pct = lambda v: 100.0 * v / cyc
@@ -69,10 +72,11 @@ def main():
     print('  LCD push      %5.1f %%  %.2f ms per frame' % (pct(push), ms(push)))
     print('    SPI wait    %5.1f %%  %.2f ms per frame'
           % (pct(spi_wait), ms(spi_wait)))
-    print('  tic wait      %5.1f %%  (audio interrupts taken meanwhile '
-          'count here too)' % pct(idle))
+    print('  push wait     %5.1f %%  %.2f ms per frame'
+          % (pct(push_wait), ms(push_wait)))
+    print('  tic wait      %5.1f %%' % pct(idle))
     print('  engine       ~%5.1f %%  (the rest)'
-          % pct(cyc - audio - push - idle))
+          % pct(cyc - audio - push - push_wait - idle))
 
 
 if __name__ == '__main__':
