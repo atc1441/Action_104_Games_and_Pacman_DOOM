@@ -85,7 +85,7 @@ with the debugger disconnected:
 
 ```sh
 python flash.py write ../firmware/build/action104/doom.bin 0x08004000 --leave-halted
-python flash.py write ../wad/doom1_e1m1_sfx.wad            0x08090000 --leave-halted
+python flash.py write ../wad/doom1_e1m3_sfx.wad            0x08090000 --leave-halted
 ```
 
 OpenOCD / CMSIS-DAP is the same command with `flash_openocd.py`.
@@ -99,7 +99,7 @@ Unplug the probe, then power-cycle. Do not resume with SWD still attached.
 | `0x00000000` | Boot ROM (the bootloader), on-chip, 32 KB - not writable, not touched. It is what jumps to `0x08004000`. |
 | `0x08000000`-`0x08003FFF` | A 256-byte header starting with `T1FF`, the rest blank. No code. Leave it alone: it is presumably flash parameters the boot ROM reads. |
 | `0x08004000`-`0x0808FFFF` | Application. DOOM goes here, ~545 KB. |
-| `0x08090000`-`0x083FFFFF` | WAD (E1M1 + `DS*` lumps), read by pointer through XIP. |
+| `0x08090000`-`0x083FFFFF` | WAD (E1M1-E1M3 + `DS*` lumps), read by pointer through XIP. |
 
 Secure boot is not active - the bootloader validates nothing before
 jumping. That was verified by breakpointing it, not assumed.

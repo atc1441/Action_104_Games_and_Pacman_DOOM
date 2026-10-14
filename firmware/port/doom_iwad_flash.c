@@ -12,8 +12,8 @@
 #include "doom_iwad.h"
 
 /*
- * A full megabyte is reserved for the firmware even though the image is
- * about 545 KB, so there is room to grow without moving the WAD.
+ * The firmware gets 0x08004000-0x0808FFFF (560 KB, see link_doom.ld). The
+ * image is about 540 KB, so it can grow a little without moving the WAD.
  */
 #define WAD_BASE  0x08090000u     /* after firmware; room for DS* lumps  */
 #define WAD_MAX   0x00370000u     /* rest of the 4 MB flash              */

@@ -386,13 +386,6 @@ static struct
     const char *name;
 }
 
-/*
- * Changed for this console: the attract loop played demos, and those are
- * recorded in levels from other episodes. The trimmed WAD contains only
- * E1M1, so the engine aborted with "W_GetNumForName: E1M5 not found".
- * The sequence now shows the title screen throughout instead.
- * Drop this patch if you flash a full WAD.
- */
 const demostates[][4] =
 {
     {
@@ -403,16 +396,23 @@ const demostates[][4] =
     },
 
     {
-        {D_SetPageName, "TITLEPIC"},
-        {D_SetPageName, "TITLEPIC"},
-        {D_SetPageName, "TITLEPIC"},
-        {D_SetPageName, "TITLEPIC"},
+        {G_DeferedPlayDemo, "demo1"},
+        {G_DeferedPlayDemo, "demo1"},
+        {G_DeferedPlayDemo, "demo1"},
+        {G_DeferedPlayDemo, "demo1"},
     },
     {
         {D_SetPageName, "TITLEPIC"},
         {D_SetPageName, "TITLEPIC"},
         {D_SetPageName, "TITLEPIC"},
         {D_SetPageName, "TITLEPIC"},
+    },
+
+    {
+        {G_DeferedPlayDemo, "demo2"},
+        {G_DeferedPlayDemo, "demo2"},
+        {G_DeferedPlayDemo, "demo2"},
+        {G_DeferedPlayDemo, "demo2"},
     },
 
     {
@@ -423,17 +423,10 @@ const demostates[][4] =
     },
 
     {
-        {D_SetPageName, "TITLEPIC"},
-        {D_SetPageName, "TITLEPIC"},
-        {D_SetPageName, "TITLEPIC"},
-        {D_SetPageName, "TITLEPIC"},
-    },
-
-    {
-        {D_SetPageName, "TITLEPIC"},
-        {D_SetPageName, "TITLEPIC"},
-        {D_SetPageName, "TITLEPIC"},
-        {D_SetPageName, "TITLEPIC"},
+        {G_DeferedPlayDemo, "demo3"},
+        {G_DeferedPlayDemo, "demo3"},
+        {G_DeferedPlayDemo, "demo3"},
+        {G_DeferedPlayDemo, "demo3"},
     },
 
     {
@@ -445,6 +438,56 @@ const demostates[][4] =
 
 
 };
+
+/*
+ * Changed for this console: the flash only holds a trimmed WAD, and the
+ * shareware demos are recorded in E1M5, E1M3 and E1M7. A demo whose map
+ * is not in the WAD would abort with "W_GetNumForName: E1M5 not found",
+ * so the title screen is shown in its place.
+ */
+static boolean D_DemoMapExists(const char *demo)
+{
+    char name[9];
+    int lump;
+    const byte *p;
+    int episode, map;
+
+    /* Lump names are matched exactly; G_DoPlayDemo upper-cases the demo
+     * name the same way. */
+    ExtractFileBase(demo, name);
+    name[8] = 0;
+    lump = W_CheckNumForName(name);
+    if (lump == -1)
+        return false;
+
+    p = W_CacheLumpNum(lump);
+
+    /* Up to 1.2 the header starts with the skill, from 1.4 with a version
+     * byte (104-111) followed by the skill. */
+    if (p[0] >= 104 && p[0] <= 111)
+        p++;
+    episode = p[1];
+    map = p[2];
+
+    if (_g->gamemode == commercial)
+    {
+        if (map < 1 || map > 99) return false;
+        name[0] = 'M'; name[1] = 'A'; name[2] = 'P';
+        name[3] = '0' + (map / 10);
+        name[4] = '0' + (map % 10);
+        name[5] = 0;
+    }
+    else
+    {
+        if (episode < 1 || episode > 9 || map < 1 || map > 9) return false;
+        name[0] = 'E';
+        name[1] = '0' + episode;
+        name[2] = 'M';
+        name[3] = '0' + map;
+        name[4] = 0;
+    }
+    return W_CheckNumForName(name) != -1;
+}
 
 /*
  * This cycles through the demo sequences.
@@ -463,6 +506,13 @@ void D_DoAdvanceDemo(void)
 
     if (!demostates[++_g->demosequence][_g->gamemode].func)
         _g->demosequence = 0;
+
+    if (demostates[_g->demosequence][_g->gamemode].func == G_DeferedPlayDemo &&
+        !D_DemoMapExists(demostates[_g->demosequence][_g->gamemode].name))
+    {
+        D_SetPageName("TITLEPIC");
+        return;
+    }
 
     demostates[_g->demosequence][_g->gamemode].func(demostates[_g->demosequence][_g->gamemode].name);
 }
@@ -617,7 +667,7 @@ static void IdentifyVersion()
         /*
          * Changed for this console: the game mode is inferred from the
          * number of levels present (sw >= 9 for shareware). Our WAD holds
-         * only E1M1, so no threshold matches and the mode would stay
+         * fewer maps, so no threshold matches and the mode would stay
          * "indetermined". M_NewGame then picks the four-entry episode menu
          * and aborts with "M_EPI4 not found", because episode 4 only
          * exists in Ultimate Doom.

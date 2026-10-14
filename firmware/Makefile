@@ -12,7 +12,7 @@
 #
 # Flashing is a separate step, see docs/FLASHING.md:
 #   python ../tools/flash.py write build/action104/doom.bin 0x08004000 --leave-halted
-#   python ../tools/flash.py write ../wad/doom1_e1m1_sfx.wad 0x08090000 --leave-halted
+#   python ../tools/flash.py write ../wad/doom1_e1m3_sfx.wad 0x08090000 --leave-halted
 
 BOARD  ?= action104
 CLOCK_BOOST ?= 1

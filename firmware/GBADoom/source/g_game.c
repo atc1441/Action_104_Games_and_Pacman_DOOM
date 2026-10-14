@@ -675,7 +675,9 @@ void G_SecretExitLevel (void)
  * Changed for this console: reboot when the finished level has no
  * successor in the WAD.
  *
- * The flash only fits a trimmed IWAD, so after E1M1 there is no E1M2.
+ * The flash only fits a trimmed IWAD, so the last map in it has no
+ * successor. The check is on gamemap + 1, which also covers a secret
+ * exit as long as the map after the secret level is missing too.
  * A first attempt returned to the title screen from G_DoWorldDone, which
  * still hung - the intermission screen runs before that and wants
  * graphics for the "next level" that are not there either. So the reset

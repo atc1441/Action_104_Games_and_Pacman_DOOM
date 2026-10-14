@@ -49,7 +49,7 @@ the public ACM32 SDKs now serve as a reference for most blocks - see
 
 On **both** consoles:
 
-* DOOM (shareware E1M1) at a playable frame rate
+* DOOM (shareware E1M1-E1M3) at a playable frame rate
 * **~194 MHz PLL**, matching stock. MPI retune runs from RAM; flash the
   image with the probe leaving the core halted and power-cycle with SWD
   idle so the debugger is not attached across the clock source switch
@@ -70,8 +70,9 @@ On **both** consoles:
   purpose. Effects only.
 * **The screen wipe looks wrong.** Front and back buffer share memory to
   save 38 KB.
-* Only one map fits alongside the firmware and the sound lumps in 4 MB, so
-  the WAD here is trimmed to E1M1.
+* Only three maps fit alongside the firmware and the sound lumps in 4 MB,
+  so the WAD here is trimmed to E1M1-E1M3. Finishing E1M3 restarts the
+  console to the title screen.
 
 ---
 
@@ -237,7 +238,7 @@ the probe idle:
 
 ```sh
 python flash.py write ../firmware/build/action104/doom.bin 0x08004000 --leave-halted
-python flash.py write ../wad/doom1_e1m1_sfx.wad            0x08090000 --leave-halted
+python flash.py write ../wad/doom1_e1m3_sfx.wad            0x08090000 --leave-halted
 # CMSIS-DAP / OpenOCD: flash_openocd.py, same arguments
 ```
 
@@ -274,7 +275,7 @@ firmware/          the DOOM firmware, standalone build
   port/            GBADoom's platform layer (including the mixer)
   GBADoom/         vendored engine + engine-patches.diff
 tools/             flash.py (J-Link), flash_openocd.py (CMSIS-DAP), RAM writer, rescue
-wad/               trimmed shareware WAD (E1M1 + DS* sound lumps)
+wad/               trimmed shareware WAD (E1M1-E1M3 + DS* sound lumps)
 dumps/             stock firmware and boot ROM, one folder per console
 docs/              hardware notes, SoC identification, flashing and porting guides
 images/            hardware photos and product listings
@@ -290,11 +291,11 @@ images/            hardware photos and product listings
   maps perfectly onto these consoles' memory-mapped SPI flash. Upstream commit
   `89097b3`. Six files are changed - heap size, time base, a missing
   include that newer compilers reject, and three that only matter because
-  the WAD here holds a single map. All of them are
+  the WAD here holds only part of the episode. All of them are
   listed in [`firmware/GBADoom/engine-patches.diff`](firmware/GBADoom/engine-patches.diff)
   and commented in place.
 * **id Software** - DOOM. The WAD here is the freely redistributable shareware
-  IWAD, trimmed to a single map. The DOOM source code is GPL v2.
+  IWAD, trimmed to its first three maps. The DOOM source code is GPL v2.
 * **[atc1441/TXW818_WalkieTalkie_Doom](https://github.com/atc1441/TXW818_WalkieTalkie_Doom)**
   - reference for how to get GBADoom onto a small Cortex-M with a SPI panel.
 * **[NordicPlayground/nrf-doom](https://github.com/NordicPlayground/nrf-doom)**

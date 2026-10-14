@@ -1,44 +1,82 @@
 # WAD
 
-`doom1_e1m1_sfx.wad` is the DOOM shareware IWAD with every map except E1M1
-removed, plus the 55 `DS*` sound lumps merged back in (`tools/merge_sfx.py`).
-About 3.1 MB. Shared resources (palettes, textures, sprites, graphics) are
-untouched; only the other maps' lumps are gone.
+`doom1_e1m3_sfx.wad` is the one to flash: the DOOM shareware IWAD with
+E1M1-E1M3 and the 55 `DS*` sound lumps, 3,558,448 bytes. Shared resources
+(palettes, textures, sprites, graphics) are untouched; E1M4-E1M9 and the
+music are gone.
 
-Why trim maps: the flash is 4 MB, the firmware takes about 545 KB, and the
-bootloader wants the first 16 KB. Why add sounds: GBADoom's `GbaWadUtil`
-strips `DS*` because that engine used a Maxmod bank; this port mixes those
-lumps from XIP instead.
-
-Flash it to `0x08090000` (not `0x08110000` — the extra 523 KB of PCM does
-not fit above that):
+Flash it to `0x08090000`:
 
 ```sh
-python tools/flash_openocd.py write wad/doom1_e1m1_sfx.wad 0x08090000 --leave-halted
+python tools/flash_openocd.py write wad/doom1_e1m3_sfx.wad 0x08090000 --leave-halted
 ```
 
 The firmware reads it by pointer straight out of the memory-mapped flash,
 so nothing is copied into RAM. See `firmware/port/doom_iwad_flash.c`.
 
+## Why three maps
+
+The flash is 4 MB. The bootloader wants the first 16 KB, the firmware
+takes about 545 KB, and from `0x08090000` to the end of the flash there are
+3,604,480 bytes for the WAD. In the layout GBADoom reads (below), the maps
+take:
+
+| Map | Bytes | | Map | Bytes |
+|---|---|---|---|---|
+| E1M1 | 80,508 | | E1M6 | 219,787 |
+| E1M2 | 167,074 | | E1M7 | 154,739 |
+| E1M3 | 163,113 | | E1M8 | 75,061 |
+| E1M4 | 129,992 | | E1M9 | 108,198 |
+| E1M5 | 130,813 | | | |
+
+E1M1-E1M3 leave 46,032 bytes free. The whole episode would be 774 KB
+short.
+
+RAM is not the limit. The zone heap is 204,780 bytes and the engine keeps
+29,924 of them. Measured over SWD, levels took 55 KB more in E1M1 (in
+play) and 111 KB in E1M3 (demo 2), leaving 63 KB free. Scaled by map
+size, the largest map, E1M6, would leave about 30 KB free.
+
+## The files
+
+| File | Contents |
+|---|---|
+| `doom1_e1m1.wad` | E1M1 only, as `GbaWadUtil` wrote it, no sound |
+| `doom1_e1m1_sfx.wad` | the same plus the `DS*` lumps |
+| `doom1_e1m3_sfx.wad` | the same plus E1M2 and E1M3 |
+
 ## Making your own
 
-To rebuild the SFX WAD from a trimmed E1M1 WAD and a full shareware IWAD:
+`GbaWadUtil` (github.com/doomhack/GbaWadUtil) converts an IWAD to what
+GBADoom reads in place: VERTEXES, LINEDEFS, SEGS and SIDEDEFS become the
+engine's own structs, and it drops the `DS*`, `DP*` and `D_*` lumps.
+Trimming the maps was done in a research tree that is not in this
+repository.
+
+To put the sounds back, then add maps from a full shareware IWAD
+(v1.9, SHA-1 `5b2e249b9c5133ec987b3ea77596381dc0d6bc1d`):
 
 ```sh
-python tools/merge_sfx.py --iwad doom1.wad --into doom1_e1m1.wad \
+python tools/merge_sfx.py --iwad doom1.wad --into wad/doom1_e1m1.wad \
     --out wad/doom1_e1m1_sfx.wad
+python tools/add_maps.py --iwad doom1.wad --into wad/doom1_e1m1_sfx.wad \
+    --maps E1M2 E1M3 --out wad/doom1_e1m3_sfx.wad
 ```
 
-Map trimming itself lived in the research tree and is not in this
-repository. If you replace this with a full WAD, revert the two `d_main.c`
-patches in `firmware/GBADoom/engine-patches.diff`. They exist only because
-a single-map WAD breaks two assumptions in the engine:
+`add_maps.py` is a port of the `GbaWadUtil` map conversion. Before it
+writes anything it converts the maps already in `--into` from the IWAD as
+well and stops unless the result is byte for byte what is there.
 
-* the attract loop plays demos recorded in maps that are no longer there
-  (`W_GetNumForName: E1M5 not found`)
-* the game mode is inferred from how many maps exist, and with one map no
-  threshold matches, so the four-episode menu appears and aborts with
-  `M_EPI4 not found`
+Three engine patches in `firmware/GBADoom/engine-patches.diff` handle a WAD
+that holds only part of the episode. All three do nothing with a full WAD:
+
+* a demo whose map is missing is replaced by the title screen. With
+  E1M1-E1M3 only demo 2 plays; demos 1 and 3 are recorded in E1M5 and E1M7.
+* the game mode is inferred from how many maps exist, and with fewer than
+  nine no threshold matches. The four-episode menu would appear and abort
+  with `M_EPI4 not found`, so the mode is forced to shareware.
+* finishing a level whose next map is missing restarts the console to the
+  title screen.
 
 ## Licence
 
