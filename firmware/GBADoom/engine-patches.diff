@@ -172,23 +172,48 @@ index d52386d..1a57844 100644
      if (thistimereply < _g->lasttimereply)
      {
 diff --git upstream/source/z_zone.c repo/source/z_zone.c
-index d4de6a2..582ffd9 100644
+index d4de6a2..1930a2c 100644
 --- upstream/source/z_zone.c
 +++ repo/source/z_zone.c
-@@ -40,7 +40,12 @@
+@@ -40,9 +40,17 @@
  
  #define ZONEID	0x1d4a11
  
 -const unsigned int maxHeapSize = (256 * 1024);
+-
+-#ifndef GBA
 +/* Changed for this console: usable SRAM is 0x20000000-0x20045FFF (280 KB,
 + * measured on the device). Roughly 62 KB go to .bss including the
 + * framebuffer and 8 KB to the stack, leaving about 209 KB.
 + * Z_Init would shrink the request itself, but in 4-byte steps - starting
 + * from a realistic value skips that very long loop. */
 +const unsigned int maxHeapSize = (200 * 1024);
- 
- #ifndef GBA
++
++/* Changed for this console: the allocation log is opt-in (-DZONE_LOG).
++ * printf goes to the 115200 baud UART, where each line blocks about
++ * 1.7 ms, and things are allocated and freed all through a firefight. */
++#ifdef ZONE_LOG
      static int running_count = 0;
+ #endif
+ 
+@@ -131,7 +139,7 @@ void Z_Free (void* ptr)
+     block->tag = 0;
+ 
+ 
+-#ifndef GBA
++#ifdef ZONE_LOG
+     running_count -= block->size;
+     printf("Free: %d\n", running_count);
+ #endif
+@@ -274,7 +282,7 @@ void* Z_Malloc(int size, int tag, void **user)
+     // next allocation will start looking here
+     mainzone->rover = base->next;
+ 
+-#ifndef GBA
++#ifdef ZONE_LOG
+     running_count += base->size;
+     printf("Alloc: %d (%d)\n", base->size, running_count);
+ #endif
 diff --git upstream/source/g_game.c repo/source/g_game.c
 index 2275c69..747d61d 100644
 --- upstream/source/g_game.c
