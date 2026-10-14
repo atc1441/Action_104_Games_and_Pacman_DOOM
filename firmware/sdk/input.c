@@ -131,11 +131,11 @@ uint32_t input_raw(void)
  * cycle. SRAM access is fine. So the firmware mirrors the input registers
  * to a fixed address and the host only ever reads.
  *
- * Note what this deliberately does NOT do: reconfigure pins. A first
- * version set every unused pin to input with a pull-up, which crashed the
- * console at startup - something on one of those pins is needed as an
- * output. The registers are published exactly as the bootloader and
- * input_init() leave them.
+ * Note what this deliberately does NOT do: reconfigure pins. Setting
+ * every unused pin to input with a pull-up crashes the console at
+ * startup - something on one of those pins is needed as an output. The
+ * registers are published exactly as the boot ROM and input_init() leave
+ * them.
  * ------------------------------------------------------------------ */
 void input_scan_init(void)
 {

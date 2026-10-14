@@ -6,8 +6,8 @@
 /*
  * Logical keys.
  *
- * The order is the bit order of the mask the stock firmware builds in
- * g_key_mask (0x20030329) - which is exactly an NES joypad byte. That is
+ * The order is the bit order of the key mask the stock firmware builds -
+ * which is exactly an NES joypad byte. That is
  * no accident: the stock application is an NES emulator.
  */
 #define KEY_A       0x01u

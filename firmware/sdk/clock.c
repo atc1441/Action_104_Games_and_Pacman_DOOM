@@ -1,14 +1,13 @@
 /*
  * clock.c - clock, cache and FPU init
  *
- * A 1:1 rebuild of the stock firmware's SystemInit
- * (flash 0x08025354 - 0x0802549C), which its reset handler calls at
- * 0x08004118 before anything else.
+ * A 1:1 rebuild of the stock firmware's SystemInit, which its reset
+ * handler calls before anything else.
  *
  * Deliberately copied rather than "understood": without a datasheet the
  * meaning of individual bits in 0x4002103C / 0x40021020 / 0x40021048
  * cannot be pinned down, while the order is unambiguous from the code.
- * What the sequence actually achieves was measured, not guessed.
+ * The resulting clock was measured.
  *
  * The bootloader hands over at 16 MHz. Everything above that happens here.
  */
@@ -114,7 +113,7 @@ void clock_init(void)
 /*
  * ============================ CLOCK TREE ============================
  *
- * From the stock firmware's SystemCoreClock routine (0x08005588):
+ * From the stock firmware's SystemCoreClock routine:
  *
  *   source:      RCC +0x1C bits[2:0]   0/1 reference, 2 = 12 MHz, 3 = PLL
  *   PLL:         F = Fref * (M + 12) / (P + 1) / (Q + 1)
@@ -129,7 +128,7 @@ void clock_init(void)
  *
  * ===================== CLOCK BOOST (stock app_board_init) ====================
  *
- * clock_boost() matches stock app_board_init (0x0802AA70 / 0x0802AD96):
+ * clock_boost() matches stock app_board_init:
  * a .ramfunc ORs 0x100 into MPI +0x10 (and keeps divider 2), then the
  * rest runs from flash — the same split as stock. OSC bit 3 is set again
  * before lock (SystemInit cleared it for 62 MHz). After source=3, R20
@@ -155,7 +154,7 @@ void clock_init(void)
 
 RAMFUNC static void mpi_retune_for_pll(void)
 {
-    /* Stock stub at 0x20000000: OR 0x100 into +0x10. Must not run from XIP. */
+    /* The stock SRAM stub: OR 0x100 into +0x10. Must not run from XIP. */
     uint32_t div = SPI_FLASH_DIV;
     SPI_FLASH_DIV = (div & 0xFFFF0000u) | 2u;
     SPI_FLASH_RXCTL |= 0x100u;
@@ -201,9 +200,7 @@ int clock_boost(void)
         if (!t) { MARK = 0x81; MARKV = RCC_R48; __asm volatile ("cpsie i" ::: "memory"); return -2; }
     }
 
-    /* Set the dividers and only NOW switch the PLL itself on. These two
-     * steps were missing from earlier attempts, which switched the clock
-     * source to a PLL that had never been enabled. */
+    /* Set the dividers and only then switch the PLL itself on. */
     MARK = 5;
     RCC_R48 &= ~R48_BIT1;
     RCC_PLLCFG = PLLCFG_194MHZ;
@@ -230,7 +227,7 @@ int clock_boost(void)
     if (wait_r20_ready()) { MARK = 0x84; MARKV = RCC_R20; __asm volatile ("cpsie i" ::: "memory"); return -5; }
     RCC_R20 &= ~0xF0u;
     if (wait_r20_ready()) { MARK = 0x85; MARKV = RCC_R20; __asm volatile ("cpsie i" ::: "memory"); return -6; }
-    /* Stock 0x0802B186: BFI #0x24, lsb=8, width=6 */
+    /* R20 bits 13:8 = 0x24, as the stock firmware sets them */
     RCC_R20 = (RCC_R20 & ~0x3F00u) | 0x2400u;
     DBG_C4 &= ~0x100000u;
     DSB(); ISB();

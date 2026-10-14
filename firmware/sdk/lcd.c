@@ -1,9 +1,8 @@
 /*
  * lcd.c - display driver, rebuilt from the stock firmware
  *
- * The stock firmware sends every byte through a fully unrolled sequence
- * (app 0x0803000A..0x08032492). This is the same sequence, written as a
- * loop. Board-specific pins, register values and the panel init table
+ * The stock firmware sends every byte through a fully unrolled sequence.
+ * This is the same sequence, written as a loop. Board-specific pins, register values and the panel init table
  * come from boards/<board>/board.h.
  *
  * On CS handling: a command and its parameters belong in ONE transaction
@@ -28,14 +27,14 @@ void lcd_delay_ms(uint32_t ms)
 /*
  * One transfer of arbitrary length, CS stays low throughout.
  *
- * Short transfers (commands) use the bootloader SPI routine (0x2B60):
- * set the length once, start, then push bytes while the TX FIFO has room.
- * Pixel rows go through DMA channel 1 (stock FUN_08027464).
+ * Short transfers (commands) work like the boot ROM's SPI routine: set
+ * the length once, start, then push bytes while the TX FIFO has room.
+ * Pixel rows go through DMA channel 2, as in the stock firmware.
  */
 #define SR_TXFULL  (1u << 3)
 #define SR_TXDONE  (1u << 14)
 
-/* Commands stay on the CPU; pixel rows (480/640 bytes) use DMA ch1. */
+/* Commands stay on the CPU; pixel rows (480/640 bytes) use DMA. */
 #define SPI_DMA_MIN  16u
 
 static void spi_write_cpu(const uint8_t *buf, uint32_t len)
@@ -61,18 +60,19 @@ static void spi_write_cpu(const uint8_t *buf, uint32_t len)
 }
 
 /*
- * Stock FUN_08027464 (program) + FUN_08027510 (wait / tear down).
- * Channel 1 only: NEXT=0 one-shot, 8-bit SPI. Never write channel 0.
+ * One-shot 8-bit transfer on the LCD DMA channel (NEXT = 0), programmed
+ * and torn down as the stock LCD code does. The audio channel is never
+ * touched here.
  */
 static void spi_write_dma(const uint8_t *buf, uint32_t len)
 {
     SPI_SR(SPI) = (SPI_SR(SPI) & ~2u) | SR_TXDONE;
 
-    DMA_CH_NEXT(1) = 0;
-    DMA_CH_SRC(1)  = (uint32_t)(uintptr_t)buf;
-    DMA_CH_DST(1)  = SPI_LCD_BASE;
-    DMA_CH_CTRL(1) = DMA_CH1_CTRL_HI | len;
-    DMA_CH_CFG(1)  = DMA_CH1_CFG;
+    DMA_CH_NEXT(DMA_CH_LCD) = 0;
+    DMA_CH_SRC(DMA_CH_LCD)  = (uint32_t)(uintptr_t)buf;
+    DMA_CH_DST(DMA_CH_LCD)  = SPI_LCD_BASE;
+    DMA_CH_CTRL(DMA_CH_LCD) = DMA_LCD_CTRL_HI | len;
+    DMA_CH_CFG(DMA_CH_LCD)  = DMA_LCD_CFG;
 
     SPI_CR20(SPI)  = len;
     SPI_CR0C(SPI)  = (SPI_CR0C(SPI) & 0xfffffff6u) | 0x1du;
@@ -106,14 +106,8 @@ void lcd_cmd(uint8_t c)
  * Command plus parameters in ONE transaction - CS stays low, only DC
  * toggles.
  *
- * This is not cosmetic. An earlier version pulsed CS per byte, so no
- * parameter ever arrived. It went unnoticed for a long time because the
- * stock firmware had already configured the panel before we flashed over
- * it: the picture looked right while our own init was in fact doing
- * nothing. Only after a power cycle did the panel come up in its default
- * orientation with RGB instead of BGR.
- *
- * The stock window routine (0x08005968) does it exactly this way.
+ * With CS pulsed per byte the panel drops every parameter. The stock
+ * window routine holds CS the same way.
  */
 void lcd_cmd_args(uint8_t c, const uint8_t *args, uint32_t n)
 {
@@ -149,7 +143,7 @@ void lcd_gpio_init(void)
     RCC_EN0 |= RCC_EN0_SPI1;
     RCC_EN1 |= RCC_EN1_GPIOA;
     RCC_EN2 |= RCC_EN2_EXTI;
-    /* DMA channel 1 feeds SPI; lcd_fill() runs before audio_init(). */
+    /* The LCD DMA channel feeds SPI; lcd_fill() runs before audio_init(). */
     RCC_EN0 |= RCC_EN0_DMA1 | RCC_EN0_BIT1;
 
     /*
@@ -182,9 +176,7 @@ void lcd_init(void)
      *
      * Without it a cold start leaves the controller in an undefined state:
      * it lights up, accepts the init, and still shows nothing but a white
-     * raster. That failure is easy to misread, because as long as some
-     * other firmware has already initialised the panel - and flashing does
-     * not cut power - everything looks fine.
+     * raster.
      */
 #ifdef BOARD_LCD_RESET_PIN
     GPIO_CLR(LCD_PORT, BOARD_LCD_RESET_PIN);
@@ -216,7 +208,7 @@ void lcd_init(void)
  * Set the address window.
  *
  * 0x2A/0x2B/0x2C are NOT part of the stock init sequence - the stock code
- * issues them from its fill routine at 0x0800586C. The order used here is
+ * issues them from its fill routine. The order used here is
  * the industry-standard one and works on this panel.
  */
 void lcd_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
@@ -234,8 +226,7 @@ void lcd_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
     lcd_cmd(0x2C);   /* RAMWR */
 }
 
-/* One screen line as a buffer - the stock application does the same,
- * keeping its line buffer at 0x20044BEC. */
+/* One screen line as a buffer, as the stock application does. */
 static uint8_t line_buf[LCD_WIDTH * 2];
 
 void lcd_fill(uint16_t color)

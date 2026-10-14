@@ -1,14 +1,10 @@
 /*
  * uart.c - console UART, rebuilt from the boot ROM
  *
- * Boot ROM FUN_00002e5c / FUN_00002d64 talks USART2 at 115200 8N1 on
- * PB0/PB1. The stock *application* printf putchar is `bx lr`, so those
- * FlyThings strings never left the chip.
- *
- * The Pico 2 CDC UART did not see USART2 traffic with that pinout live,
- * so this driver also brings up USART1 on PA9/PA10 (boot ROM's other
- * instance) and writes both. Whichever header the case exposes will get
- * the bytes; PA9/PA10 are not game buttons.
+ * The boot ROM talks USART2 at 115200 8N1 on PB0/PB1; its other instance
+ * is USART1 on PA9/PA10. Which one the case pads carry is not
+ * established, so this driver brings up both and writes every byte to
+ * both. PA9/PA10 are not game buttons.
  */
 
 #include "uart.h"

@@ -122,19 +122,12 @@ int I_StartSound(int id, int channel, int vol, int sep)
 
 #ifdef AUDIO_SELFTEST
 /*
- * Temporary: work out what the output actually wants.
+ * Output self-test: a square wave through five sample formats in turn,
+ * each at its own pitch, so a listener can tell which one comes through.
+ * With ARR = 255 the right one is format 1: CCR1 takes 0..255, and the
+ * other formats put most values outside the PWM range.
  *
- * Kept from bring-up, before the block was known to be TIM1. With
- * ARR = 255 the answer is format 1: CCR1 takes 0..255, and the other
- * formats put most values outside the PWM range.
- *
- * Faint noise and no tone means either the level is far too low or the
- * sample format is wrong, and those two look identical from the outside.
- * So instead of guessing, play a square wave through five candidate
- * formats in turn, each at its own pitch, and let a human say which one
- * came through:
- *
- *   1  220 Hz   8-bit unsigned, mid 128       (what the mixer does now)
+ *   1  220 Hz   8-bit unsigned, mid 128       (what the mixer does)
  *   2  330 Hz   12-bit unsigned, mid 2048
  *   3  440 Hz   16-bit unsigned, mid 32768
  *   4  660 Hz   16-bit signed

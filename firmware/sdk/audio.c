@@ -5,11 +5,8 @@
  * than derived from a datasheet - there is none. See docs/HARDWARE.md.
  *
  * The register values below are the ones observed while the stock
- * firmware was playing, written in the same order. They were first
- * replayed as bare numbers; the block has since turned out to be TIM1
- * (docs/SOC_IDENTIFICATION.md), so each value is now spelled out with
- * the field names of the Aisinochip SDK. The values themselves have not
- * changed.
+ * firmware was playing, written in the same order and spelled out with
+ * the TIM1 field names of the Aisinochip SDK (docs/SOC_IDENTIFICATION.md).
  *
  * Decoded, it is plain PWM: PWM mode 1 on channel 1, ARR = 255 so the
  * duty cycle in CCR1 takes 256 steps, and a DMA request on every CC1
@@ -43,34 +40,30 @@
 #define AUDIO_TICK_HZ   500u
 
 /*
- * DMA channel 0. The control word's low half is the remaining transfer
- * count (counts down while playing). Reload value from the stock
- * descriptor while Forest Kid was playing: 0x854002E1.
+ * Audio DMA channel. The control word's low half is the remaining transfer
+ * count (counts down while playing).
  */
-#define DMA_CTRL_HI   0x85400000u
-#define DMA_CFG_VAL   0x000A0083u
-#define DMA_DONE_CH0  (1u << 0)
+#define DMA_CTRL_HI     0x85400000u
+#define DMA_CFG_VAL     0x000A0083u
+#define DMA_DONE_AUDIO  (1u << DMA_CH_AUDIO)
 
 /* The buffers hold 16-bit words even though the useful range is 8 bits
  * (0..ARR); that is how the stock firmware feeds CCR1. */
 static uint16_t buf[2][AUDIO_BUF_SAMPLES];
 
 /*
- * Live Forest Kid (stock, playing): DMA ch0 +0x08 stayed at 0x20044BA0,
- * an 8-word self-looping descriptor:
+ * The 8-word self-looping descriptor the stock firmware streams with:
  *
  *   +0x00 SRC   ping-pong base (firmware patches this)
  *   +0x04 DST   0x40012C34 (TIM1_CCR1)
- *   +0x08 NEXT  0x20044BA0 (self)
+ *   +0x08 NEXT  the descriptor itself
  *   +0x0C CTRL  0x854002E1
  *   +0x10       0x40012C00 (TIM1_BASE)
  *   +0x14       0x10       (same as TIM1_PSC)
  *   +0x18       0xFF       (same as TIM1_ARR)
  *   +0x1C       1
  *
- * Earlier we pointed +0x08 at a single next-SRC word; the controller
- * consumed it and stopped. A 4-word chain also stalled. The missing
- * words are what the hardware reloads.
+ * A shorter descriptor stalls the channel.
  */
 typedef struct {
     volatile uint32_t src;
@@ -124,9 +117,8 @@ static void desc_set_src(unsigned idx)
     desc.src = (uint32_t)(uintptr_t)buf[idx];
 }
 
-/* Stock FUN_0803f080: channel SRC = buffer A, descriptor SRC = buffer B,
- * NEXT = &descriptor (self). The extra four words are what sat after the
- * 4-word SG fields in RAM while Forest Kid played; DMA reloads them. */
+/* As the stock audio init: channel SRC = buffer A, descriptor SRC =
+ * buffer B, NEXT = &descriptor (self). */
 static void dma_start(unsigned play)
 {
     const unsigned nxt = play ^ 1u;
@@ -140,12 +132,12 @@ static void dma_start(unsigned play)
     desc.w18      = TIM1_ARR_VAL;
     desc.w1c      = 1;
 
-    DMA_CH_CFG(0)  = DMA_CFG_VAL & ~1u;
-    DMA_CH_SRC(0)  = (uint32_t)(uintptr_t)buf[play];
-    DMA_CH_DST(0)  = desc.dst;
-    DMA_CH_NEXT(0) = desc.next;
-    DMA_CH_CTRL(0) = desc.ctrl;
-    DMA_CH_CFG(0)  = DMA_CFG_VAL | 1u;
+    DMA_CH_CFG(DMA_CH_AUDIO)  = DMA_CFG_VAL & ~1u;
+    DMA_CH_SRC(DMA_CH_AUDIO)  = (uint32_t)(uintptr_t)buf[play];
+    DMA_CH_DST(DMA_CH_AUDIO)  = desc.dst;
+    DMA_CH_NEXT(DMA_CH_AUDIO) = desc.next;
+    DMA_CH_CTRL(DMA_CH_AUDIO) = desc.ctrl;
+    DMA_CH_CFG(DMA_CH_AUDIO)  = DMA_CFG_VAL | 1u;
 }
 
 void audio_init(void)
@@ -228,14 +220,14 @@ static void audio_service(void)
 {
     if (!running) return;
 
-    const uint32_t remain = DMA_CH_CTRL(0) & 0xFFFFu;
-    const uint32_t cfg    = DMA_CH_CFG(0);
-    const uint32_t src    = DMA_CH_SRC(0);
+    const uint32_t remain = DMA_CH_CTRL(DMA_CH_AUDIO) & 0xFFFFu;
+    const uint32_t cfg    = DMA_CH_CFG(DMA_CH_AUDIO);
+    const uint32_t src    = DMA_CH_SRC(DMA_CH_AUDIO);
     const unsigned cur    = (src >= (uint32_t)(uintptr_t)buf[1]) ? 1u : 0u;
 
     /* Hardware reloads from the self-loop descriptor. Patch SRC to the
-     * idle buffer once DMA has moved onto the other one, matching stock
-     * which rewrites 0x20044BA0 while NEXT stays a self-pointer. */
+     * idle buffer once DMA has moved onto the other one, as the stock
+     * firmware does, while NEXT stays a self-pointer. */
     if ((cfg & 1u) && remain != 0) {
         if (cur == playing) return;
         playing = cur;
@@ -243,7 +235,7 @@ static void audio_service(void)
         const unsigned idle = cur ^ 1u;
         audio_fill(buf[idle], AUDIO_BUF_SAMPLES);
         desc_set_src(idle);
-        DMA_IRQ_CLR = DMA_DONE_CH0;
+        DMA_IRQ_CLR = DMA_DONE_AUDIO;
         return;
     }
 
@@ -251,7 +243,7 @@ static void audio_service(void)
     const unsigned nxt = playing ^ 1u;
     playing = nxt;
     blocks++;
-    DMA_IRQ_CLR = DMA_DONE_CH0;
+    DMA_IRQ_CLR = DMA_DONE_AUDIO;
     audio_fill(buf[nxt ^ 1u], AUDIO_BUF_SAMPLES);
     dma_start(nxt);
 }

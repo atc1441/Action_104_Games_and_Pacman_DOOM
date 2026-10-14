@@ -45,8 +45,8 @@ void SysTick_Handler(void)    ALIAS(Default_Handler);
 
 /*
  * 16 system vectors + 40 IRQs.
- * The 40 comes from the stock bootloader's vector table: from index 56
- * (offset 0xE0) onwards it already contains code.
+ * The 40 comes from the boot ROM's vector table: from index 56 (offset
+ * 0xE0) onwards it already contains code.
  */
 #define NUM_IRQ 40
 

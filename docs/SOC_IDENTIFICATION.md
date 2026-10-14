@@ -153,9 +153,9 @@ Matches the G103 controller at the same base address, `0x40031000`.
 | `+0x30` | master enable | `CONFIG`, bit 0 `EN` |
 | channel `+0x00..+0x10` | SRC, DST, NEXT, CTRL, CFG | `CXSRCADDR`, `CXDESTADDR`, `CXLLI`, `CXCTRL`, `CXCONFIG` |
 
-Both SDKs place channel *n* at `base + 0x100 + n * 0x20`. `soc.h` uses a
-`0x40` stride, so the LCD "channel 1" at `0x40031140` is the address the
-SDKs call channel 2.
+Both SDKs place channel *n* at `base + 0x100 + n * 0x20`, and `soc.h`
+uses the same numbering: audio on channel 0 (`0x40031100`), the LCD on
+channel 2 (`0x40031140`), the two addresses the stock firmware programs.
 
 ## Audio: TIM1 PWM
 

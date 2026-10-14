@@ -12,9 +12,8 @@
  *      CPUID 0x631F1320, 8 KB I-cache + 8 KB D-cache, no TrustZone.
  *
  * The peripheral base addresses look exactly like an STM32L4. The register
- * layouts do not. Anyone who assumes ST silicon here and reaches for an
- * STM32 SDK will spend a long time chasing ghosts - see the GPIO note
- * below for what that costs.
+ * layouts do not: they follow the Aisinochip ACM32 SDKs where they match
+ * anything (docs/SOC_IDENTIFICATION.md).
  */
 
 #ifndef SOC_H
@@ -83,20 +82,13 @@
 
 /*
  * The layout is NOT the STM32 one, even though the base addresses match.
- * Three deviations are proven:
+ * Three deviations are proven from the stock firmware:
  *
- *   - the input register is at +0x0C, not +0x10
- *     (the stock key scan reads it there, VMA 0x20036000 ff.)
- *   - BSRR is at +0x14, not +0x18
- *     (the stock LCD routine uses it that way, app 0x0802FC3E ff.)
- *   - the pull configuration is at +0x08, not +0x0C
- *     (gpio_init of the stock app, 0x08004C5A: two bits per pin. In
- *      operation GPIOA +0x08 reads 0xA5540555, i.e. 01 = pull-up on the
- *      populated pins.)
- *
- * The third one cost real time: OSPEEDR was assumed at +0x08, so input
- * init never enabled any pull-up. The inputs floated and pressing a
- * button against ground changed nothing at all.
+ *   - the input register is at +0x0C, not +0x10 (the stock key scan)
+ *   - BSRR is at +0x14, not +0x18 (the stock LCD routine)
+ *   - the pull configuration is at +0x08, not +0x0C (the stock GPIO
+ *     init, two bits per pin; in operation GPIOA +0x08 reads 0xA5540555,
+ *     i.e. 01 = pull-up on the populated pins)
  *
  * The rest of the layout is Aisinochip's GPIO_TypeDef (ACM32G103/H5 SDK
  * names in the comments), as used by the stock HAL_GPIO_Init:
@@ -174,13 +166,12 @@ static inline void gpio_config(uint32_t port, uint32_t pin, uint32_t mode,
  *   0x52005000 - external flash. DO NOT TOUCH while running from flash:
  *                XIP goes through it, i.e. the very code the CPU is
  *                currently executing.
- * Offsets derived from the stock firmware's byte-send sequence
- * (app 0x0803000A..0x08030024).
+ * Offsets derived from the stock firmware's byte-send sequence.
  * ------------------------------------------------------------------ */
 #define SPI_LCD_BASE    0x40030000u
 #define SPI_FLASH_BASE  0x52005000u   /* XIP; write +0x04/+0x10 only from RAM */
 
-/* BootROM FUN_00002800 writes the low 16 bits of +0x04 (DIV2FAIL / DIV4FAIL).
+/* The boot ROM writes the low 16 bits of +0x04 (DIV2FAIL / DIV4FAIL).
  * Stock app_board_init only calls its RAM stub when that field is 2 and
  * +0x10 bits 8:9 are clear. */
 #define SPI_FLASH_DIV    REG32(SPI_FLASH_BASE + 0x04)
@@ -256,12 +247,14 @@ static inline void gpio_config(uint32_t port, uint32_t pin, uint32_t mode,
 /* ------------------------------------------------------------------ *
  * DMA                                                        [V]
  *
- * Channels are 0x40 apart starting at 0x40031100. Two are in use:
+ * The ACM32G103 DMA1 controller: channel n at 0x40031100 + n * 0x20, the
+ * SDK's numbering. Two channels are in use, the same two the stock
+ * firmware uses:
  *   channel 0  ->  TIM1_CCR1 (self-loop, CTRL high 0x8540, CFG 0x000A0083)
- *   channel 1  ->  LCD SPI data 0x40030000 (one-shot, lcd.c spi_write_dma)
+ *   channel 2  ->  LCD SPI data 0x40030000 (one-shot, lcd.c spi_write_dma)
  *
- * Channel 1 live values from stock FUN_08027464 (NES lines were 512 bytes;
- * DOOM rows are 480, fill rows 640). Do not copy the audio descriptor:
+ * Channel 2, as the stock LCD code programs it. Do not copy the audio
+ * descriptor:
  *   NEXT = 0
  *   CTRL = 0x04120000 | byte_length
  *   CFG  = 0x00010003
@@ -270,38 +263,40 @@ static inline void gpio_config(uint32_t port, uint32_t pin, uint32_t mode,
  * DST = 0x40012C34, +0x0C = 0x854002CA (the low half counts down, so it
  * is the remaining transfer count), +0x10 = 0x000A0083 with bit 0 as the
  * channel enable.
+ *
+ * ACM32G103 SDK register names in the comments.
  * ------------------------------------------------------------------ */
 #define DMA_BASE       0x40031000u
-#define DMA_GLOBAL_EN  REG32(DMA_BASE + 0x30)   /* controller master enable */
-#define DMA_GLOBAL_1C  REG32(DMA_BASE + 0x1C)   /* also 1 while streaming  */
-#define DMA_IRQ_CLR    REG32(DMA_BASE + 0x08)   /* write 1 to acknowledge */
-#define DMA_STATUS     REG32(DMA_BASE + 0x14)   /* bit0 = channel 0 done  */
-#define DMA_CH(n)      (DMA_BASE + 0x100 + (n) * 0x40)
-#define DMA_CH_SRC(n)  REG32(DMA_CH(n) + 0x00)
-#define DMA_CH_DST(n)  REG32(DMA_CH(n) + 0x04)
-#define DMA_CH_NEXT(n) REG32(DMA_CH(n) + 0x08)  /* -> word holding next SRC */
-#define DMA_CH_CTRL(n) REG32(DMA_CH(n) + 0x0C)
-#define DMA_CH_CFG(n)  REG32(DMA_CH(n) + 0x10)  /* bit0 = enable */
+#define DMA_GLOBAL_EN  REG32(DMA_BASE + 0x30)   /* CONFIG: bit0 enable     */
+#define DMA_GLOBAL_1C  REG32(DMA_BASE + 0x1C)   /* ENCHSTATUS              */
+#define DMA_IRQ_CLR    REG32(DMA_BASE + 0x08)   /* INTTCCLR: write 1 to ack */
+#define DMA_STATUS     REG32(DMA_BASE + 0x14)   /* RAWINTTCSTATUS: bit n =
+                                                 * channel n done          */
+#define DMA_CH(n)      (DMA_BASE + 0x100 + (n) * 0x20)
+#define DMA_CH_SRC(n)  REG32(DMA_CH(n) + 0x00)  /* CHSRCADDR               */
+#define DMA_CH_DST(n)  REG32(DMA_CH(n) + 0x04)  /* CHDESTADDR              */
+#define DMA_CH_NEXT(n) REG32(DMA_CH(n) + 0x08)  /* CHLLI: next descriptor  */
+#define DMA_CH_CTRL(n) REG32(DMA_CH(n) + 0x0C)  /* CHCTRL                  */
+#define DMA_CH_CFG(n)  REG32(DMA_CH(n) + 0x10)  /* CHCONFIG: bit0 enable   */
 
-#define DMA_CH1_CTRL_HI  0x04120000u   /* LCD SPI 8-bit one-shot, FUN_08027464 */
-#define DMA_CH1_CFG      0x00010003u   /* ch1 enable; not the audio 0x000A0083 */
+#define DMA_CH_AUDIO   0u
+#define DMA_CH_LCD     2u
+
+#define DMA_LCD_CTRL_HI  0x04120000u   /* LCD SPI 8-bit one-shot           */
+#define DMA_LCD_CFG      0x00010003u   /* enable; not the audio 0x000A0083 */
 
 /* ------------------------------------------------------------------ *
  * UART                                                       [V]
  *
- * Boot ROM logs over USART2 at 115200 8N1 (FUN_00002e5c / FUN_00002d64).
- * The case exposes that one UART. USART1 (PA9/PA10, AF 1) exists but is
- * not brought out. The stock *application* printf putchar is `bx lr`, so
- * FlyThings strings never actually left the chip; only the boot ROM did.
+ * The boot ROM logs over USART2 at 115200 8N1, on PB0/PB1 (AF 1). Its
+ * other instance is USART1 on PA9/PA10 (AF 1). PB0 is also KEY_A.
  *
- * Layout from boot ROM + HAL_UART_Transmit (app FUN_08005708):
+ * Layout from the boot ROM and the stock HAL_UART_Transmit:
  *   +0x00  TDR (write a byte)
  *   +0x04  SR  bit 5 = TX full (wait while set), bit 9 = TX busy
  *   +0x08  baud (integer in bits 21:6, 6-bit fraction in 5:0)
- *   +0x14  CR  bit 0 = enable, 0x300 = TX+RX (FUN_00002c60)
+ *   +0x14  CR  bit 0 = enable, 0x300 = TX+RX
  *   +0x1C  0xE0 = 8N1 | 0x20
- *
- * Pins: GPIOB 0/1, AF 1 (boot ROM FUN_00002c94). PB0 is also KEY_A.
  * ------------------------------------------------------------------ */
 #define USART1_BASE  0x40013800u
 #define USART2_BASE  0x40004400u

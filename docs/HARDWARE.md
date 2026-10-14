@@ -134,8 +134,10 @@ cannot be stopped before the boot ROM runs.
 ### UART
 
 The boot ROM logs over **USART2** (`0x40004400`) at **115200 8N1**. Handle
-setup is `FUN_00002e5c`; byte send is `FUN_00002d64`. Pins are **PB0 and
-PB1**, AF 1 (`FUN_00002c94`). RCC `+0x34` bit 17 clocks the block.
+setup is `FUN_00002e5c`; byte send is `FUN_00002d64`; `FUN_00002c60`
+sets the control register. Pins are **PB0 and PB1**, AF 1
+(`FUN_00002c94`). The layout below also matches the 104 Games
+`HAL_UART_Transmit` (`0x08005708`). RCC `+0x34` bit 17 clocks the block.
 
 Register layout (not STM32 USART):
 
@@ -204,6 +206,11 @@ Every pin the stock 104 Games firmware configures:
 The boot ROM puts USART2 on PB0/PB1 the same way as USART1: AF 1, pull-up,
 drive 3.
 
+The three STM32 deviations come from the stock code: the key scan
+(copied to SRAM at `0x20036000`) reads IDR at `+0x0C`, the LCD routine at
+`0x0802FC3E` drives DC/CS through BSRR at `+0x14`, and `HAL_GPIO_Init`
+writes the pulls at `+0x08` (`0x08004C5A`).
+
 The PUPDR offset in particular cost real time: with OSPEEDR assumed there,
 input init never enabled a pull-up, every input floated, and pressing a
 button changed nothing at all.
@@ -224,6 +231,14 @@ Both instances share the same IP block.
 | `+0x24` | start | `CS` |
 | `+0x2C` | XIP command register: `0x00040000` = manual, `0x05441849` = XIP | `MEMO_ACC` |
 | `+0x30` | XIP read command, `0xFAEB` | `CMD` |
+
+The offsets come from the stock byte-send sequence at
+`0x0803000A`..`0x08030024`, repeated unrolled up to `0x08032492`. The boot
+ROM's own SPI routine (`0x2B60`) sets the length once and then pushes
+bytes while the TX FIFO has room; `lcd.c` sends commands the same way.
+The boot ROM's `FUN_00002800` writes the low 16 bits of the flash
+controller's `+0x04`, which stock `app_board_init` checks before running
+its SRAM stub.
 
 `+0x2C` is the actual switch between "controller fetches on its own" and
 "we push bytes through the FIFO". Bits 5:6 of `+0x08` are not, despite
@@ -247,9 +262,10 @@ On this device Fref is 15,525,065 Hz and `+0x4C` is `0x326` (M=38, P=3,
 Q=0), giving 194.06 MHz - which is what the stock firmware runs at.
 
 The bootloader hands over at 16 MHz. `clock_init()` in
-`firmware/sdk/clock.c` replicates the stock SystemInit (~62 MHz) and then
-`clock_boost()` takes the PLL to **~194 MHz**, matching stock
-`app_board_init`. Confirmed live: `source=3`, `R20=0x80002400`,
+`firmware/sdk/clock.c` replicates the stock SystemInit (`0x08025354` -
+`0x0802549C`, called first by the reset handler at `0x08004118`), which
+gives ~62 MHz, and then `clock_boost()` takes the PLL to **~194 MHz**,
+matching stock `app_board_init`. Confirmed live: `source=3`, `R20=0x80002400`,
 `PLLCFG=0x326`, `g_cpu_hz=194063312`, hostbox `mark=9`.
 
 ### Clock boost (what actually failed, and what fixed it)
@@ -260,8 +276,10 @@ the abstract. Three things all have to be true:
 
 1. **MPI retune from RAM.** A `.ramfunc` ORs `0x100` into MPI `+0x10` and
    keeps divider 2 *before* the source switch. Stock copies a Thumb stub
-   to SRAM for the same reason (`0xF8413A01` / `0xD1F90F04`).
-2. **The rest of the sequence, including OSC bit 3 and R20 `0x2400`.**
+   to SRAM (`0x20000000`) for the same reason (`0xF8413A01` /
+   `0xD1F90F04`).
+2. **The rest of the sequence, including OSC bit 3 and R20 `0x2400`**
+   (bits 13:8 = `0x24`, a `BFI` at `0x0802B186`).
    Missing those looks like a PLL that "worked" and then died.
 3. **Do not attach SWD across `RCC+0x1C` source=`3`.** That desyncs the
    MEM-AP even if the CPU is halted. Flash with `--leave-halted` and
@@ -296,7 +314,12 @@ Two things that will bite anyone rebuilding this driver:
   byte means no parameter ever arrives. This is easy to miss, because the
   stock firmware has already configured the panel before you flash over it:
   the picture looks right while your own init does nothing. Only after a
-  power cycle does the truth show up.
+  power cycle does the truth show up. The stock window routine
+  (`0x08005968`) holds CS this way.
+
+The window commands `0x2A`/`0x2B`/`0x2C` are not part of the init: the
+stock fill routine (`0x0800586C`) sends them. It pushes the picture one
+line at a time from a line buffer at `0x20044BEC`, as `lcd.c` does.
 
 ### PAC-MAN
 
@@ -418,14 +441,14 @@ The controller at `0x40031000` matches the ACM32G103's `DMA1`: `+0x08`
 `CONFIG` (bit 0 `EN`), and per channel `CXSRCADDR`, `CXDESTADDR`, `CXLLI`,
 `CXCTRL`, `CXCONFIG`.
 
-Channels are `0x40` apart from `0x40031100` in `soc.h`. The Aisinochip
-SDKs space channels `0x20` apart, so the address used for channel 1
-(`0x40031140`) is the one the SDKs call channel 2. Two are in use:
+Channel *n* sits at `0x40031100 + n * 0x20`, as in the Aisinochip SDKs,
+and `soc.h` uses that numbering. The stock firmware programs two
+channels, `0x40031100` and `0x40031140`:
 
-| Channel | Destination |
-|---|---|
-| 0 | `0x40012C34` - the audio data register |
-| 1 | `0x40030000` - the LCD SPI data register |
+| Channel | Address | Destination |
+|---|---|---|
+| 0 | `0x40031100` | `0x40012C34` - the audio data register |
+| 2 | `0x40031140` | `0x40030000` - the LCD SPI data register |
 
 Channel 0 while Forest Kid plays: source walking the ping-pong buffers,
 `+0x08` stuck at the descriptor (`0x20044BA0`), `+0x0C` high half `0x8540`
@@ -436,7 +459,7 @@ Global `+0x14` bit 0 is "channel done" and `+0x08` acknowledges it. The
 stock mixer waits on that bit; a self-looping descriptor also lets the
 channel keep running if the bit is a pulse the poller can miss.
 
-Channel 1 drives the LCD SPI data register. Stock `FUN_08027464` programs
+Channel 2 drives the LCD SPI data register. Stock `FUN_08027464` programs
 a one-shot (NEXT = 0, not the audio self-loop): SRC = line buffer, DST =
 `0x40030000`, CTRL = `0x04120000 | byte_length`, CFG = `0x00010003`, then
 SPI `+0x20` = length, `+0x0C` bits `0x1d`, start `+0x24` bit 0, and

@@ -7,14 +7,9 @@
  * Shared mailbox between firmware and host (J-Link / SWD).
  *
  * The linker script pins this structure into section .mailbox, which puts
- * it at a fixed 0x20000000. That matters: earlier versions used guessed
- * addresses around 0x2000FD00, which sit right inside DOOM's zone heap -
- * it starts just past .bss and grows over them. Both sides quietly
- * overwrote each other's data.
- *
- * At the bottom of RAM the space is permanently free (the vector table
- * lives in flash) and the offsets no longer move when .bss grows, so host
- * tools may hard-code them:
+ * it at a fixed 0x20000000, below .data, .bss and DOOM's zone heap. The
+ * space is permanently free (the vector table lives in flash) and the
+ * offsets do not move when .bss grows, so host tools may hard-code them:
  *
  *   0x20000000  key_magic     "KEYB", otherwise keys is ignored
  *   0x20000004  keys          key bits, written by the host
