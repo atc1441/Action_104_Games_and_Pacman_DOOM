@@ -289,9 +289,10 @@ images/            hardware photos and product listings
   this port is built on, itself based on prboom. GBADoom was the right choice
   because it reads the WAD by pointer straight out of cartridge ROM, which
   maps perfectly onto these consoles' memory-mapped SPI flash. Upstream commit
-  `89097b3`. Six files are changed - heap size, time base, a missing
-  include that newer compilers reject, and three that only matter because
-  the WAD here holds only part of the episode. All of them are
+  `89097b3`. Seven files are changed - heap size, time base, a missing
+  include that newer compilers reject, a cycle counter for profiling
+  builds, and three that only matter because the WAD here holds only part
+  of the episode. All of them are
   listed in [`firmware/GBADoom/engine-patches.diff`](firmware/GBADoom/engine-patches.diff)
   and commented in place.
 * **id Software** - DOOM. The WAD here is the freely redistributable shareware

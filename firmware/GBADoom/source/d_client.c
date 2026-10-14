@@ -92,6 +92,12 @@ void TryRunTics (void)
     int runtics;
     int entertime = I_GetTime();
 
+#ifdef PROFILE
+    /* Changed for this console: PROFILE builds count the cycles spent
+     * waiting for the next tic, read over SWD by tools/profile.py. */
+    extern volatile uint32_t prof_idle_cyc;
+    const uint32_t prof_t0 = *(volatile uint32_t *)0xE0001004u; /* DWT_CYCCNT */
+#endif
     // Wait for tics to run
     while (1)
     {
@@ -110,6 +116,9 @@ void TryRunTics (void)
         else
             break;
     }
+#ifdef PROFILE
+    prof_idle_cyc += *(volatile uint32_t *)0xE0001004u - prof_t0;
+#endif
 
     while (runtics-- > 0)
     {

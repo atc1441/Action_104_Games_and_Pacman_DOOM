@@ -179,6 +179,12 @@ void I_FinishUpdate_e32(const byte *srcBuffer, const byte *pallete,
                         const unsigned int width, const unsigned int height)
 {
     if (!srcBuffer) return;
+#ifdef PROFILE
+    /* Frames pushed and cycles spent pushing them, read over SWD. */
+    extern volatile uint32_t prof_frames, prof_push_cyc;
+    const uint32_t prof_t0 = DWT_CYCCNT;
+    prof_frames++;
+#endif
     if (pallete) I_SetPallete_e32(pallete);
 
     const unsigned pix_w = width * 2;      /* width counts 16-bit words */
@@ -240,7 +246,19 @@ void I_FinishUpdate_e32(const byte *srcBuffer, const byte *pallete,
     }
     lcd_data_wait();
 #endif
+#ifdef PROFILE
+    prof_push_cyc += DWT_CYCCNT - prof_t0;
+#endif
 }
+
+#ifdef PROFILE
+/*
+ * PROFILE builds only: cycle counters that tools/profile.py reads over
+ * SWD. prof_audio_cyc lives in sdk/audio.c, prof_spi_wait_cyc is added to
+ * in sdk/lcd.c and prof_idle_cyc in GBADoom's TryRunTics.
+ */
+volatile uint32_t prof_frames, prof_push_cyc, prof_idle_cyc, prof_spi_wait_cyc;
+#endif
 
 int  I_GetVideoWidth_e32(void)  { return 120; }   /* in 16-bit words */
 int  I_GetVideoHeight_e32(void) { return 160; }

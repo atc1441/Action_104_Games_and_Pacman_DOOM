@@ -83,7 +83,14 @@ static void spi_dma_start(const uint8_t *buf, uint32_t len)
 
 static void spi_dma_finish(void)
 {
+#ifdef PROFILE
+    extern volatile uint32_t prof_spi_wait_cyc;
+    const uint32_t prof_t0 = DWT_CYCCNT;
     while (!(SPI_SR(SPI) & SR_TXDONE)) { }
+    prof_spi_wait_cyc += DWT_CYCCNT - prof_t0;
+#else
+    while (!(SPI_SR(SPI) & SR_TXDONE)) { }
+#endif
 
     SPI_SR(SPI)   |= 0x4002u;
     SPI_CR0C(SPI) &= ~8u;

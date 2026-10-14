@@ -200,9 +200,20 @@ void audio_init(void)
     SYST_CSR = SYST_CSR_CLKSOURCE | SYST_CSR_TICKINT | SYST_CSR_ENABLE;
 }
 
+#ifdef PROFILE
+/* Cycles spent refilling the audio buffers, read over SWD. */
+volatile uint32_t prof_audio_cyc;
+#endif
+
 void SysTick_Handler(void)
 {
+#ifdef PROFILE
+    const uint32_t t0 = DWT_CYCCNT;
     audio_service();
+    prof_audio_cyc += DWT_CYCCNT - t0;
+#else
+    audio_service();
+#endif
 }
 
 /*

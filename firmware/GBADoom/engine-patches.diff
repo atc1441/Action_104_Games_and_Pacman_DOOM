@@ -12,6 +12,33 @@ index 471f204..26e44e0 100644
  extern const unsigned int doom_iwad_len;
  
  #endif // DOOM_IWAD_H
+diff --git upstream/source/d_client.c repo/source/d_client.c
+index 650934b..3515f9b 100644
+--- upstream/source/d_client.c
++++ repo/source/d_client.c
+@@ -92,6 +92,12 @@ void TryRunTics (void)
+     int runtics;
+     int entertime = I_GetTime();
+ 
++#ifdef PROFILE
++    /* Changed for this console: PROFILE builds count the cycles spent
++     * waiting for the next tic, read over SWD by tools/profile.py. */
++    extern volatile uint32_t prof_idle_cyc;
++    const uint32_t prof_t0 = *(volatile uint32_t *)0xE0001004u; /* DWT_CYCCNT */
++#endif
+     // Wait for tics to run
+     while (1)
+     {
+@@ -110,6 +116,9 @@ void TryRunTics (void)
+         else
+             break;
+     }
++#ifdef PROFILE
++    prof_idle_cyc += *(volatile uint32_t *)0xE0001004u - prof_t0;
++#endif
+ 
+     while (runtics-- > 0)
+     {
 diff --git upstream/source/d_main.c repo/source/d_main.c
 index 48d3085..8e67ab5 100644
 --- upstream/source/d_main.c
