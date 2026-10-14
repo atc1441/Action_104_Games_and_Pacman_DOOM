@@ -129,12 +129,13 @@ proof that memory is there.
   if the board runs a different reference
 * `firmware/sdk/lcd.c`, `firmware/sdk/input.c` - driven entirely by
   `board.h`
-* `firmware/port/` - the geometry constants derive from `LCD_WIDTH` and
-  `LCD_HEIGHT`
+* `firmware/port/` - apart from the frame size below
 
-If a smaller panel makes the 240x160 DOOM image not fit, that is the one
-place in `port/i_system_console.c` that needs attention - `ORIGIN_X` and
-`ORIGIN_Y` go negative and the image needs cropping instead of centring.
+The one exception is the frame size. `port/i_system_console.c` scales the
+240x160 DOOM frame to `OUT_W` x `OUT_H`, chosen for the part of the 104
+Games panel its case leaves visible (see docs/HARDWARE.md, Display). A
+board with a different window wants its own values there; to measure
+the window, draw a ruler pattern on the full panel and photograph it.
 
 ## Contributing a board
 

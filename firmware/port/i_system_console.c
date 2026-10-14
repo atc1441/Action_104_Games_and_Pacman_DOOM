@@ -9,7 +9,8 @@
  * Frame format: GBADoom writes its framebuffer as unsigned short, i.e.
  * two 8-bit palette indices per 16-bit word. SCREENWIDTH = 120 therefore
  * means 240 real pixels, and the image is 240 x 160. The panel is
- * 320 x 240, so the image is centred with a 40-pixel border.
+ * 320 x 240, of which the case shows about 266 x 218, and the frame is
+ * scaled to the width of that (see Geometry).
  *
  * The WAD is NOT in RAM. w_wad.c reaches into it directly via
  * &doom_iwad[filepos], and here doom_iwad points into the XIP window of
@@ -39,10 +40,27 @@
 /* ------------------------------------------------------------------ *
  * Geometry
  * ------------------------------------------------------------------ */
+/*
+ * The case covers the panel's edges: a test pattern showed about columns
+ * 26-291 and rows 12-228, give or take 3 pixels. The 240 x 160 frame is
+ * scaled, nearest neighbour, to 264 x 198 centred on the panel: 11/10
+ * across to fill the visible width, and 4:3 overall, the shape the DOOM
+ * art was drawn for. Building with -DFRAME_KEEP_ASPECT keeps the GBA's
+ * 3:2 shape instead, 264 x 176.
+ */
 #define DOOM_W   240           /* real pixels, = 2 * SCREENWIDTH */
 #define DOOM_H   160
-#define ORIGIN_X ((LCD_WIDTH  - DOOM_W) / 2)
-#define ORIGIN_Y ((LCD_HEIGHT - DOOM_H) / 2)
+#define OUT_W    264
+#ifdef FRAME_KEEP_ASPECT
+#define OUT_H    176
+#else
+#define OUT_H    198
+#endif
+#define ORIGIN_X ((LCD_WIDTH  - OUT_W) / 2)
+#define ORIGIN_Y ((LCD_HEIGHT - OUT_H) / 2)
+
+/* Source pixel for output pixel i of n, sampled at the pixel centre. */
+#define SRC_OF(i, n, src) ((unsigned)(((2u * (i) + 1u) * (src)) / (2u * (n))))
 
 /* ------------------------------------------------------------------ *
  * Palette: DOOM hands over 256 RGB888 entries, the panel wants RGB565
@@ -54,7 +72,10 @@
 static uint16_t pal565[256];
 
 /* Two rows, so one can be filled while DMA sends the other. */
-static uint16_t row_rgb[2][DOOM_W];
+static uint16_t row_rgb[2][OUT_W];
+
+/* Source column of each output column, filled by I_InitScreen_e32. */
+static uint8_t col_src[OUT_W];
 
 void I_SetPallete_e32(const byte *pallete)
 {
@@ -81,7 +102,8 @@ void I_SetPallete_e32(const byte *pallete)
  * needed plus a full A-Z and 0-9, which is small enough not to matter and
  * saves the next person from adding them.
  * ------------------------------------------------------------------ */
-#define OVL_X   3
+/* Top right, clear of the engine's messages, which start on the left. */
+#define OVL_X   (DOOM_W - 3u - (sizeof(ovl_text) - 1u) * OVL_ADV)
 #define OVL_Y   3
 #define OVL_H   7
 #define OVL_ADV 6                       /* 5 px glyph + 1 px gap */
@@ -225,24 +247,32 @@ void I_FinishUpdate_e32(const byte *srcBuffer, const byte *pallete,
     lcd_data_wait();
 #else
     lcd_set_window(ORIGIN_X, ORIGIN_Y,
-                   ORIGIN_X + pix_w - 1, ORIGIN_Y + rows - 1);
+                   ORIGIN_X + OUT_W - 1u, ORIGIN_Y + OUT_H - 1u);
 
-    for (unsigned y = 0; y < rows; y++) {
+    /*
+     * One output row at a time, each converted from its source row. A
+     * source row shown twice is converted twice, which costs nothing:
+     * the conversion runs while the previous row is still on the SPI.
+     */
+    for (unsigned y = 0; y < OUT_H; y++) {
         uint16_t *d = row_rgb[y & 1u];
-        const byte *s = srcBuffer + y * pix_w;
+        const unsigned sy = SRC_OF(y, OUT_H, rows);
+        const byte *s = srcBuffer + sy * pix_w;
 
-        if (ovl_row(y)) {
-            for (unsigned x = 0; x < pix_w; x++)
-                d[x] = ovl_rgb(overlay_pixel(x, y), s[x]);
+        if (ovl_row(sy)) {
+            for (unsigned x = 0; x < OUT_W; x++) {
+                const unsigned sx = col_src[x];
+                d[x] = ovl_rgb(overlay_pixel(sx, sy), s[sx]);
+            }
         } else {
-            for (unsigned x = 0; x < pix_w; x++)
-                d[x] = pal565[s[x]];
+            for (unsigned x = 0; x < OUT_W; x++)
+                d[x] = pal565[s[col_src[x]]];
         }
 
         /* Send this row once the previous one is out; the next row is
          * converted while it goes. */
         if (y) lcd_data_wait();
-        lcd_data_start((const uint8_t *)d, pix_w * 2u);
+        lcd_data_start((const uint8_t *)d, OUT_W * 2u);
     }
     lcd_data_wait();
 #endif
@@ -265,6 +295,9 @@ int  I_GetVideoHeight_e32(void) { return 160; }
 
 void I_InitScreen_e32(void)
 {
+    for (unsigned x = 0; x < OUT_W; x++)
+        col_src[x] = (uint8_t)SRC_OF(x, OUT_W, DOOM_W);
+
     lcd_init();
     lcd_fill(0x0000);
     input_init();

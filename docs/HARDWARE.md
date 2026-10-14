@@ -357,6 +357,13 @@ The window commands `0x2A`/`0x2B`/`0x2C` are not part of the init: the
 stock fill routine (`0x0800586C`) sends them. It pushes the picture one
 line at a time from a line buffer at `0x20044BEC`, as `lcd.c` does.
 
+The case hides the panel's edges. A ruler pattern drawn over the full
+320x240 and photographed through the window showed about columns 26-291
+and rows 12-228, give or take 3 pixels - roughly 266x218, centred.
+`port/i_system_console.c` scales DOOM's 240x160 frame to 264x198 at
+(28, 21): the visible width, at the 4:3 shape the DOOM art was drawn for.
+Stretching to the full 264x216 was tried and looked too tall.
+
 ### PAC-MAN
 
 78-byte init sequence, in `firmware/boards/pacman/board.h`. Two differences
