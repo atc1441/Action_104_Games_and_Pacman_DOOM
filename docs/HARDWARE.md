@@ -103,9 +103,13 @@ there.
 
 | Register | Bit | Observation | Assumption |
 |---|---|---|---|
-| `+0x28` | 1 | set only by the LCD init, next to bit 0 | none; purpose unknown |
 | `+0x38` | 4 | set with every GPIO clock enable, and before the boot ROM's accesses to `0x40010400`, the EXTI block `HAL_GPIO_Init` writes | EXTI clock |
 | `+0x38` | 6 | the off/on toggle before the TIM1 setup | that the toggle also resets TIM1 |
+
+**Set by the stock firmware, not by this one**: `+0x28` bit 1, which the
+stock LCD init sets next to bit 0. Nothing identifies it. This firmware
+leaves it clear: after a cold boot `+0x28` reads `0x10000421`, and the
+display, its DMA channel, the sound and all the buttons work.
 
 **Set by the boot ROM**: its reset routine (`0x000007FC`), which ends by
 jumping to `0x08004000`, ORs these in before touching the flash interface
@@ -114,9 +118,9 @@ bit to one peripheral; this firmware leaves them as they are.
 
 | Register | Boot ROM sets | Running value under DOOM | Remaining bits |
 |---|---|---|---|
-| `+0x28` | `0x00000020` (bit 5) | `0x10000423` | 0, 1, 10 ours; **28 set by no code found** |
+| `+0x28` | `0x00000020` (bit 5) | `0x10000421` | 0, 10 ours; **28 set by no code found** |
 | `+0x2C` | `0x07C00004` (bits 2, 22-26) | `0x07C00007` | 0, 1, 2 ours (GPIOC also set by the boot ROM) |
-| `+0x30` | `0x00000011` | not read | not used by this firmware |
+| `+0x30` | `0x00000011` | `0x00000011` | not used by this firmware |
 | `+0x34` | `0x08000000` (bit 27) | `0x08020000` | 17 ours |
 | `+0x38` | `0x00000001` (bit 0) | `0x00000251` | 4, 6, 9 ours |
 
@@ -486,8 +490,8 @@ steps, which matches the 8-bit source samples.
 
 Replaying the observed TIM1 registers is not enough:
 
-* **The DMA1 clock, `RCC+0x28` bit 0.** With it, `RCC+0x28` bit 1 and
-  `RCC+0x38` bit 9 all clear, the DMA channel registers read back as zero
+* **The DMA1 clock, `RCC+0x28` bit 0.** With it and `RCC+0x38` bit 9
+  both clear, the DMA channel registers read back as zero
   no matter how often they are written.
 * **`0x40031030` = 1**, the DMA controller's master enable. This one is
   nasty: with it clear, the channel registers accept writes, read back

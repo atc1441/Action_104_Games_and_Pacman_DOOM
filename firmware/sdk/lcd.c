@@ -139,12 +139,12 @@ void lcd_data_buf(const uint8_t *p, uint32_t n)
 
 void lcd_gpio_init(void)
 {
-    /* Clocks - exactly the bits the stock firmware sets */
+    /* Clocks, as the stock LCD init sets them (see docs/HARDWARE.md) */
     RCC_EN0 |= RCC_EN0_SPI1;
     RCC_EN1 |= RCC_EN1_GPIOA;
     RCC_EN2 |= RCC_EN2_EXTI;
     /* The LCD DMA channel feeds SPI; lcd_fill() runs before audio_init(). */
-    RCC_EN0 |= RCC_EN0_DMA1 | RCC_EN0_BIT1;
+    RCC_EN0 |= RCC_EN0_DMA1;
 
     /*
      * Pins as the stock LCD init sets them: SCK and MOSI alternate

@@ -56,9 +56,6 @@
 #define RCC_EN2    REG32(RCC_BASE + 0x38)
 
 #define RCC_EN0_DMA1    (1u << 0)    /* [V] DMA controller 0x40031000      */
-#define RCC_EN0_BIT1    (1u << 1)    /* [A] unknown: the stock LCD init
-                                      * sets it next to RCC_EN0_DMA1, and
-                                      * nothing identifies it             */
 #define RCC_EN0_SPI1    (1u << 10)   /* [V] LCD SPI controller 0x40030000  */
 #define RCC_EN1_GPIOA   (1u << 0)    /* [V]                                */
 #define RCC_EN1_GPIOB   (1u << 1)    /* [V]                                */
