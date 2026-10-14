@@ -20,8 +20,19 @@
 #define SCB_CCR      REG32(0xE000ED14u)   /* configuration and control     */
 #define SCB_CPACR    REG32(0xE000ED88u)   /* coprocessor access control    */
 #define SCB_ICIALLU  REG32(0xE000EF50u)   /* I-cache invalidate all        */
+#define SCB_CCSIDR   REG32(0xE000ED80u)   /* cache size ID                 */
+#define SCB_CSSELR   REG32(0xE000ED84u)   /* cache size selection          */
+#define SCB_DCISW    REG32(0xE000EF60u)   /* D-cache invalidate by set/way */
 
 #define CCR_IC       (1u << 17)           /* instruction cache enable      */
+#define CCR_DC       (1u << 16)           /* data cache enable             */
+
+/* ARMv8-M MPU */
+#define MPU_CTRL     REG32(0xE000ED94u)
+#define MPU_RNR      REG32(0xE000ED98u)
+#define MPU_RBAR     REG32(0xE000ED9Cu)
+#define MPU_RLAR     REG32(0xE000EDA0u)
+#define MPU_MAIR0    REG32(0xE000EDC0u)
 #define CPACR_FPU    (0xFu << 20)         /* CP10/CP11 full access         */
 
 /*
@@ -53,6 +64,8 @@ uint32_t g_cpu_hz = 16000000u;
 #define ISB() __asm volatile ("isb sy" ::: "memory")
 
 #define RAMFUNC __attribute__((section(".ramfunc"), noinline, noclone))
+
+static void dcache_init(void);
 
 /* The stock code simply counts down from 3 here. */
 static inline void short_delay(void)
@@ -108,6 +121,58 @@ void clock_init(void)
      * do not: the startup code already pointed VTOR at our own vector
      * table, which for a RAM image sits somewhere else entirely.
      */
+
+    dcache_init();
+}
+
+/*
+ * D-cache, 8 KB (CCSIDR: 64 sets, 4 ways, 32-byte lines). The flash sits
+ * in the Code region, which the default memory map makes cacheable
+ * write-through, so the WAD data read through XIP gets cached.
+ *
+ * SRAM would default to write-back, and the DMA reads the audio and pixel
+ * buffers from SRAM behind the cache's back. Two MPU regions keep SRAM
+ * coherent without any cache maintenance in the drivers:
+ *
+ *   0  0x20000000-0x200000FF  non-cacheable  hostbox, written over SWD
+ *   1  0x20000100-0x2007FFFF  write-through  everything else
+ *
+ * Everything outside them keeps the default map (PRIVDEFENA).
+ */
+#define MAIR_NC      0x44u                /* normal, non-cacheable         */
+#define MAIR_WT      0xAAu                /* normal, write-through, RA     */
+#define RBAR_AP_RW   (1u << 1)            /* read/write, any privilege     */
+
+static void dcache_init(void)
+{
+    DSB();
+    MPU_CTRL  = 0;
+    MPU_MAIR0 = MAIR_NC | (MAIR_WT << 8);
+
+    MPU_RNR  = 0;
+    MPU_RBAR = HOSTBOX_ADDR | RBAR_AP_RW;
+    MPU_RLAR = ((HOSTBOX_ADDR + 0x100u - 1u) & ~0x1Fu) | (0u << 1) | 1u;
+
+    MPU_RNR  = 1;
+    MPU_RBAR = (HOSTBOX_ADDR + 0x100u) | RBAR_AP_RW;
+    MPU_RLAR = (0x2007FFFFu & ~0x1Fu) | (1u << 1) | 1u;
+
+    MPU_CTRL = (1u << 2) | 1u;            /* PRIVDEFENA | ENABLE           */
+    DSB(); ISB();
+
+    /* Invalidate by set/way, then enable. */
+    SCB_CSSELR = 0;                       /* level 1 data cache            */
+    DSB();
+    const uint32_t ccsidr = SCB_CCSIDR;
+    const uint32_t sets = (ccsidr >> 13) & 0x7FFFu;   /* minus one */
+    const uint32_t ways = (ccsidr >> 3) & 0x3FFu;     /* minus one */
+    for (uint32_t s = 0; s <= sets; s++)
+        for (uint32_t w = 0; w <= ways; w++)
+            SCB_DCISW = (s << 5) | (w << 30);
+    DSB();
+
+    SCB_CCR |= CCR_DC;
+    DSB(); ISB();
 }
 
 /*

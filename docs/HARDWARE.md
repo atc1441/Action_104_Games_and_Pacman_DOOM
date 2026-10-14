@@ -42,6 +42,38 @@ The stock firmware also names the GUI framework it was built with:
 `unsupport platform,please contact www.zkswe.com`. The application on top
 is an NES emulator (`checkNESMagic: skipped rom with invalid mapper #%d`).
 
+### Caches
+
+Read over SWD: `CLIDR` = `0x09200003` (separate L1 instruction and data
+caches), and for the data cache `CCSIDR` = `0xF007E019`: 64 sets, 4 ways,
+32-byte lines, so 8 KB, with write-through and write-back both supported.
+`MPU_TYPE` = `0x00000800`: 8 MPU regions. The cache maintenance registers
+are the Cortex-M7 ones; Aisinochip's ACM32H5 SDK drives them through
+`core_cm7.h` (`System_EnableDAccelerate()` in `system_accelerate.c`).
+
+The firmware enables both caches in `clock_init()`. Whether the stock
+firmware enables the D-cache was not checked.
+
+| MPU region | Range | Attributes | Why |
+|---|---|---|---|
+| 0 | `0x20000000`-`0x200000FF` | normal, non-cacheable | the host mailbox, which the debugger writes |
+| 1 | `0x20000100`-`0x2007FFFF` | normal, write-through, read-allocate | DMA reads the audio and pixel buffers from SRAM |
+| default | everything else | default memory map | flash (Code region) is cacheable write-through |
+
+Write-through keeps SRAM current for the DMA and for SWD reads, so the
+drivers need no cache maintenance. Nothing DMAs into RAM.
+
+The D-cache is what makes reading the WAD out of the XIP flash fast.
+Measured in demo 2 at 194 MHz, before and after enabling it:
+
+| | Without | With |
+|---|---|---|
+| Frame rate | 33.7 fps | 35 fps (the tic rate) |
+| Engine | ~55 % of the CPU | ~22 % |
+| LCD push | 8.4 ms per frame | 6.8 ms |
+| Audio refill | 7.8 % | 3.3 % |
+| Idle | 8.8 % | 50.7 % |
+
 ## Memory map
 
 | Range | Contents |
