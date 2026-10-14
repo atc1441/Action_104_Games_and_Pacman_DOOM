@@ -205,7 +205,8 @@ This explains three things that were open questions:
 | DMA base | `0x40031000` | `0x40031000` | `0x40020000` |
 
 The RCC is the one block where neither SDK helps. The clock map in
-[HARDWARE.md](HARDWARE.md#clock-tree) remains the only reference.
+[HARDWARE.md](HARDWARE.md#clock-tree) and the clock enable table in
+[HARDWARE.md](HARDWARE.md#rcc-clock-enables) remain the only reference.
 
 ## Parts ruled out
 

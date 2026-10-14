@@ -27,10 +27,8 @@ const unsigned input_num_pins = NUM_KEYS;
 
 void input_init(void)
 {
-    /* Clocks for GPIOA/B/C. The stock application sets bit 0 of RCC_EN1
-     * for GPIOA; the bits for B and C are not identified yet, so set the
-     * low three to be safe. */
-    RCC_EN1 |= 0x7u;
+    RCC_EN1 |= RCC_EN1_GPIOA | RCC_EN1_GPIOB | RCC_EN1_GPIOC;
+    RCC_EN2 |= RCC_EN2_EXTI;
 
     for (unsigned i = 0; i < NUM_KEYS; i++) {
         const uint32_t port = board_keys[i].pin.port;

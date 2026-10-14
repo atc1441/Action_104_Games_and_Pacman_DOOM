@@ -68,13 +68,48 @@ ACM32G103 / ACM32H5 SDK headers (see
 
 | Peripheral | Base | Aisinochip SDK name |
 |---|---|---|
-| RCC | `0x40021000` (clock enables at `+0x28`, `+0x2C`, `+0x38`) | `RCC` (register layout differs from both SDKs) |
+| RCC | `0x40021000` (clock enables at `+0x28`, `+0x2C`, `+0x34`, `+0x38`, see [RCC](#rcc-clock-enables)) | `RCC` (register layout differs from both SDKs) |
 | GPIOA / GPIOB / GPIOC | `0x48000000` / `0x48000400` / `0x48000800` | `GPIOA` / `GPIOB` / `GPIOC` |
 | SPI (LCD) | `0x40030000` | `SPI1` |
 | MPI / SPI (flash) | `0x52005000` - do not touch, XIP runs through it | `SPI7` (H5), memory window `0x08000000` |
 | USART1 / USART2 | `0x40013800` / `0x40004400` - case UART is USART2 | `UART1` / `UART2` (G103), `USART1` / `USART2` (H5) |
 | Audio | `0x40012C00` | `TIM1` - see [Audio](#audio) |
 | DMA | `0x40031000` | `DMA1` (G103) |
+
+### RCC clock enables
+
+Neither SDK matches the RCC layout, so the bits are identified from what
+the stock code configures right after setting each one. Sources: both
+applications' board init (104 Games `0x0802A824`, PAC-MAN `0x08014540`),
+LCD init (`0x0802FC38` / `0x08016A84`), audio and DMA setup (104 Games
+`0x0803F080`, PAC-MAN `0x08007218`), and the boot ROM's UART MSP init
+(`0x00002C94`), GPIO setup (`0x000028C8`) and EXTI setup (`0x00006370`).
+
+**Verified**: set right before one peripheral is configured, and only
+there.
+
+| Register | Bit | Clocks | Evidence |
+|---|---|---|---|
+| `+0x28` | 0 | DMA1 (`0x40031000`) | set right before `DMA1.CONFIG = 1` in both audio setups; the LCD init, whose pixel transfers use DMA, sets it too |
+| `+0x28` | 10 | SPI1, the LCD controller | set right before the SPI1 setup in both LCD inits |
+| `+0x2C` | 0 | GPIOA | before every GPIOA init |
+| `+0x2C` | 1 | GPIOB | the boot ROM sets it alone before a GPIOB-only init, and in its USART2 (PB0/PB1) branch |
+| `+0x2C` | 2 | GPIOC | the boot ROM sets it alone before a GPIOC-only init |
+| `+0x34` | 17 | USART2 | boot ROM UART MSP init, USART2 branch |
+| `+0x38` | 6 | TIM1 | cleared, then set, right before the TIM1 setup in both audio inits |
+| `+0x38` | 9 | USART1 | boot ROM UART MSP init, USART1 branch, and the 104 Games USART1 setup; never set near the DMA |
+
+**Assumed**:
+
+| Register | Bit | Observation | Assumption |
+|---|---|---|---|
+| `+0x28` | 1 | set only by the LCD init, next to bit 0 | none; purpose unknown |
+| `+0x38` | 4 | set with every GPIO clock enable, and before the boot ROM's accesses to `0x40010400`, the EXTI block `HAL_GPIO_Init` writes | EXTI clock |
+| `+0x38` | 6 | the off/on toggle before the TIM1 setup | that the toggle also resets TIM1 |
+
+`firmware/sdk/soc.h` names them `RCC_EN0` (`+0x28`), `RCC_EN1` (`+0x2C`),
+`RCC_EN3` (`+0x34`) and `RCC_EN2` (`+0x38`), each bit tagged `[V]` or
+`[A]` as above.
 
 ### UART
 
@@ -353,8 +388,8 @@ configure PWM:
 | `+0x34` | | `CCR1` | duty cycle - DMA writes each sample here |
 | `+0x44` | `0x00008000` | `BDTR` | bit 15 MOE, main output enable |
 
-`RCC+0x38` bit 6 is toggled off and on around the setup - that is the
-block's reset.
+The TIM1 clock (`RCC+0x38` bit 6) is switched off and on again before
+the setup, see [RCC](#rcc-clock-enables).
 
 ### DMA
 
@@ -404,15 +439,13 @@ down, PC13 bounce) and prints `AudioVolume:%d`. DOOM does the same in
 Output is **8-bit PWM**: with `ARR` = 255 the duty cycle in `CCR1` has 256
 steps, which matches the 8-bit source samples.
 
-### Bringing it up: three things that were not in the code
+### Bringing it up: enables beyond the TIM1 registers
 
-Replaying the observed TIM1 registers was not enough. Three separate
-enables had to be found by diffing the whole peripheral state against the
-stock firmware while it was playing:
+Replaying the observed TIM1 registers is not enough:
 
-* **`RCC+0x28` bits 0-1 and `RCC+0x38` bit 9.** Without them the DMA
-  controller has no clock, and its channel registers read back as zero no
-  matter how often you write them.
+* **The DMA1 clock, `RCC+0x28` bit 0.** With it, `RCC+0x28` bit 1 and
+  `RCC+0x38` bit 9 all clear, the DMA channel registers read back as zero
+  no matter how often they are written.
 * **`0x40031030` = 1**, the DMA controller's master enable. This one is
   nasty: with it clear, the channel registers accept writes, read back
   correctly, and report the channel as enabled - and nothing moves.

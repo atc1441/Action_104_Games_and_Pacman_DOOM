@@ -62,9 +62,9 @@ static void uart_block_init(uint32_t base)
 
 static void uart_gpio_usart2(void)
 {
-    RCC_APB1ENR |= RCC_USART2EN;
-    RCC_EN1     |= RCC_EN1_GPIOB;
-    RCC_EN2     |= RCC_EN2_LCDMISC;
+    RCC_EN3 |= RCC_EN3_USART2;
+    RCC_EN1 |= RCC_EN1_GPIOB;
+    RCC_EN2 |= RCC_EN2_EXTI;
 
     /* PB0/PB1 AF1, pull-up, drive 3, as the boot ROM sets them. */
     gpio_config(GPIOB_BASE, 0, GPIO_MODE_AF, GPIO_PULL_UP, 3u, UART_AF);
@@ -73,10 +73,9 @@ static void uart_gpio_usart2(void)
 
 static void uart_gpio_usart1(void)
 {
-    /* Boot ROM FUN_00002c94: GPIOA clock, EN2 bits 4 and 9, PA9+PA10 AF1. */
+    RCC_EN2 |= RCC_EN2_USART1;
     RCC_EN1 |= RCC_EN1_GPIOA;
-    RCC_EN2 |= 0x210u;
-    RCC_APB1ENR |= (1u << 14);   /* STM32-style USART1EN; harmless if unused */
+    RCC_EN2 |= RCC_EN2_EXTI;
 
     /* PA9/PA10 AF1, pull-up, drive 3, as the boot ROM sets them. */
     gpio_config(GPIOA_BASE,  9, GPIO_MODE_AF, GPIO_PULL_UP, 3u, UART_AF);

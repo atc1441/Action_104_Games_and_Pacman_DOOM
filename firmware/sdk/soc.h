@@ -41,23 +41,38 @@
                                        * not a fill pattern.               */
 
 /* ------------------------------------------------------------------ *
- * RCC - clock control                                        [V]
- * The three enable registers are proven: the stock firmware sets exactly
- * these bits before its LCD init (app 0x0802FC52..0x0802FC7A).
+ * RCC - clock control
+ *
+ * The layout matches neither Aisinochip SDK, so the register names below
+ * are this project's. Each enable bit is named after the peripheral the
+ * stock firmware configures right after setting it (both applications
+ * and the boot ROM agree, see docs/HARDWARE.md). [V] marks a bit set
+ * right before that one peripheral and nothing else; [A] marks an
+ * assumption, with the reason next to it.
  * ------------------------------------------------------------------ */
 #define RCC_BASE   0x40021000u
 #define RCC_EN0    REG32(RCC_BASE + 0x28)
 #define RCC_EN1    REG32(RCC_BASE + 0x2C)
+#define RCC_EN3    REG32(RCC_BASE + 0x34)
 #define RCC_EN2    REG32(RCC_BASE + 0x38)
 
-#define RCC_EN0_LCDSPI  (1u << 10)   /* 0x400 - SPI controller 0x40030000  */
-#define RCC_EN1_GPIOA   (1u << 0)    /* 0x001 - GPIOA                      */
-#define RCC_EN1_GPIOB   (1u << 1)    /* 0x002 - GPIOB (boot ROM USART2)    */
-#define RCC_EN2_LCDMISC (1u << 4)    /* 0x010 - also set around USART2     */
-#define RCC_EN0_DMA     0x00000003u  /* bits 0-1; DMA clock (with audio)   */
-#define RCC_EN2_DMA     (1u << 9)    /* 0x200 - DMA (observed live)        */
-#define RCC_APB1ENR     REG32(RCC_BASE + 0x34)
-#define RCC_USART2EN    (1u << 17)   /* boot ROM FUN_00002c94              */
+#define RCC_EN0_DMA1    (1u << 0)    /* [V] DMA controller 0x40031000      */
+#define RCC_EN0_BIT1    (1u << 1)    /* [A] unknown: the stock LCD init
+                                      * sets it next to RCC_EN0_DMA1, and
+                                      * nothing identifies it             */
+#define RCC_EN0_SPI1    (1u << 10)   /* [V] LCD SPI controller 0x40030000  */
+#define RCC_EN1_GPIOA   (1u << 0)    /* [V]                                */
+#define RCC_EN1_GPIOB   (1u << 1)    /* [V]                                */
+#define RCC_EN1_GPIOC   (1u << 2)    /* [V]                                */
+#define RCC_EN3_USART2  (1u << 17)   /* [V]                                */
+#define RCC_EN2_EXTI    (1u << 4)    /* [A] set with every GPIO clock
+                                      * enable, and before the boot ROM's
+                                      * accesses to 0x40010400 (the EXTI
+                                      * block HAL_GPIO_Init writes)       */
+#define RCC_EN2_TIM1    (1u << 6)    /* [V] cleared, then set, right before
+                                      * TIM1 is configured. That the
+                                      * toggle also resets TIM1 is [A]    */
+#define RCC_EN2_USART1  (1u << 9)    /* [V]                                */
 
 /* ------------------------------------------------------------------ *
  * GPIO                                                       [V]/[A]
@@ -205,8 +220,8 @@ static inline void gpio_config(uint32_t port, uint32_t pin, uint32_t mode,
  * The start sequence, from app_board_init:
  *   CCER &= ~CC1E;  DMA enable &= ~1;  CCR1 = 0;  EGR = <val>;
  *   DMA enable |= 1;  BDTR |= MOE;  CR1 |= CEN;  CCER |= CC1E
- * Teardown is the reverse. RCC+0x38 bit 6 is toggled off and on around
- * it, which is the block's reset.
+ * Teardown is the reverse. The TIM1 clock (RCC_EN2_TIM1) is switched off
+ * and on again before it.
  *
  * Sample rate = f_TIM / ((PSC + 1) * (ARR + 1)) = f_TIM / 4352.
  * ------------------------------------------------------------------ */
@@ -237,10 +252,6 @@ static inline void gpio_config(uint32_t port, uint32_t pin, uint32_t mode,
 #define TIM1_CH1_PORT  GPIOA_BASE
 #define TIM1_CH1_PIN   15u
 #define TIM1_CH1_AF    2u
-
-/* RCC+0x38, called RCC_EN2 above - toggled off and on to reset TIM1.
- * (IDA labels the same register RCC_EN3.) */
-#define RCC_EN2_TIM1   (1u << 6)
 
 /* ------------------------------------------------------------------ *
  * DMA                                                        [V]

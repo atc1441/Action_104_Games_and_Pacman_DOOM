@@ -156,23 +156,9 @@ void audio_init(void)
     tim1_psc = tim1_psc_for(tim_hz);
     rate_hz  = tim_hz / ((tim1_psc + 1u) * (TIM1_ARR_VAL + 1u));
 
-    /*
-     * Clocks.
-     *
-     * These bits were found by diffing our RCC state against the stock
-     * firmware's while it was playing: EN0 bits 0-1 and EN2 bit 9 were
-     * the only ones missing. Without them the DMA controller has no clock
-     * and its registers read back as zero however often you write them -
-     * which is exactly the symptom that led here.
-     *
-     * Which of the three is the DMA and which TIM1 is not established;
-     * setting what the stock firmware sets is the honest option.
-     */
-    RCC_EN0 |= 0x00000003u;
-    RCC_EN2 |= 0x00000200u;
+    RCC_EN0 |= RCC_EN0_DMA1;
 
-    /* Reset TIM1: RCC+0x38 bit 6 off, then on, as the stock firmware
-     * does around its audio setup. */
+    /* TIM1 clock off, then on, as the stock audio init does. */
     RCC_EN2 &= ~RCC_EN2_TIM1;
     RCC_EN2 |=  RCC_EN2_TIM1;
 
