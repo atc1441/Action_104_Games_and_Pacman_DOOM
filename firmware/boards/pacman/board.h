@@ -7,8 +7,7 @@
  * ("Featuring Moo Emulation", build V.289.1 Aug 12 2025) written in C++,
  * with none of the FlyThings/ZKSWE strings the other board has.
  *
- * Which means nothing could be lifted from the disassembly. Everything
- * below was measured on the running stock firmware instead:
+ * Measured on the running stock firmware:
  *
  *   - buttons, by polling the GPIO input registers over SWD while each
  *     one was pressed (reads are harmless on this SoC; it is writes that
@@ -16,9 +15,10 @@
  *   - pin and controller configuration, by dumping GPIO and SPI registers
  *     while the stock firmware was driving the display
  *
- * The display pins turned out to be the same as on the 104-games board,
- * and the SPI controller is configured identically (mode 0x2881,
- * RX control 0x100). Only the alternate-function selection differs.
+ * The panel init was recovered from the stock LCD init (docs/HARDWARE.md).
+ *
+ * The display pins are the same as on the 104-games board, and the SPI
+ * controller is configured identically (mode 0x2881, RX control 0x100).
  */
 
 #ifndef BOARD_H
@@ -31,19 +31,6 @@
 
 /* ------------------------------------------------------------------ *
  * Display
- *
- * UNVERIFIED: the panel size and the init sequence.
- *
- * 320x240 is carried over from the other board, not measured. The init
- * sequence below is likewise the 104-games one - the stock Pac-Man
- * firmware does not contain those command bytes anywhere, so either it
- * builds them differently or the panel is a different part.
- *
- * If the first image comes out wrong, this is where to look, and there is
- * a shortcut: flashing does not cut power, so the panel keeps whatever
- * the stock firmware configured. Comment the init sequence out entirely
- * and see whether a correct picture appears - if it does, the pins and
- * the SPI setup are right and only the sequence is wrong.
  * ------------------------------------------------------------------ */
 /*
  * Landscape. MADCTL sets the rotation and the geometry has to match it:
@@ -63,15 +50,10 @@
 #define LCD_PIN_BL    8         /* see the note below - this is RESET here */
 
 /*
- * PA8 is the panel's RESET, not a backlight.
+ * PA8 is the panel's RESET, not a backlight as on the 104-games board.
  *
- * On the 104-games board the same pin switches the backlight, and copying
- * that assumption across is what made a cold start fail: the controller
- * was never reset, came up undefined, and showed a plain white raster
- * while the firmware happily sent it an init and a picture.
- *
- * The stock firmware pulses it low at 0x08016B98, waits, and releases it
- * before sending any command. lcd.c does the same when this is defined.
+ * The stock firmware pulses it low, waits, and releases it before
+ * sending any command. lcd.c does the same when this is defined.
  */
 #define BOARD_LCD_RESET_PIN 8
 
@@ -81,14 +63,9 @@
 #define BOARD_LCD_ROT90
 
 /*
- * From the running stock firmware: GPIOA MODER 0xA83DF294 masked to the
- * pins we touch, PUPDR and AFRL verbatim. AFRL is the one real difference
- * from the 104-games board, which has 0xC03C0000 here.
+ * Controller configuration, from the running stock firmware. The pins are
+ * set up in lcd.c.
  */
-#define BOARD_LCD_MODER      0x00013294u
-#define BOARD_LCD_MODER_MASK 0x00033FFFu
-#define BOARD_LCD_AFRL       0xC0000000u
-#define BOARD_LCD_PUPDR      0xA5400555u
 #define BOARD_LCD_SPI_MODE   0x00002881u
 #define BOARD_LCD_SPI_RXCTL  0x00000100u
 
@@ -99,24 +76,17 @@ typedef struct {
 } lcd_cmd_t;
 
 /*
- * The panel init, recovered from the stock firmware.
+ * The panel init, recovered from the stock firmware, where it is
+ * unrolled code: single-byte writes to the SPI data register, with the DC
+ * line toggled through GPIOA BSRR between commands and parameters.
  *
- * It lives in sub_8016A84 as unrolled code - 82 single-byte writes to the
- * SPI data register at 0x40030000, with the DC line toggled through
- * GPIOA BSRR between commands and parameters. Byte tables and
- * MOVS-density searches all missed it; what found it was counting writes
- * to the data register per function, at which point one function stood
- * out with 82 of them against ten for everything else.
+ * Same controller family as the 104-games board, different parameters:
  *
- * Same controller family as the 104-games board, different parameters -
- * which is why sending that board's sequence here left the panel black:
- *
- *   MADCTL     0x28 here, 0xE8 there
+ *   MADCTL     0x28 in the stock init, 0xE8 there
  *   0x21       display inversion on; the other board does not send it
  *   E8/EC/ED   different timing values
  *   C3/C4/C9   different power values
- *   F0-F3      its own gamma curves, which is why the picture looked
- *              darker while running on the stock configuration
+ *   F0-F3      its own gamma curves
  */
 static const lcd_cmd_t board_lcd_init_seq[] = {
     { 0xFE, 0, { 0 } },
@@ -125,11 +95,6 @@ static const lcd_cmd_t board_lcd_init_seq[] = {
      * MADCTL. The stock value is 0x28; with it the image comes out upside
      * down, because the stock firmware draws its own content the other way
      * round. Adding MY|MX turns it by 180 degrees.
-     *
-     * Now that the controller is properly reset and initialised this
-     * register actually takes effect - before, with the panel left in the
-     * state some other firmware had put it in, four different values
-     * changed nothing at all.
      */
     { 0x36, 1, { 0xE8 } },                                  /* MADCTL      */
     { 0x3A, 1, { 0x05 } },                                  /* RGB565      */
@@ -163,7 +128,7 @@ static const lcd_cmd_t board_lcd_init_seq[] = {
 /* ------------------------------------------------------------------ *
  * Buttons - measured, eight for eight, no ambiguity
  *
- * The wiring turned out to be identical to the 104-games board: the same
+ * The wiring is identical to the 104-games board: the same
  * pins carry the d-pad, and the same two carry A and B. This console just
  * populates fewer of them, and its VOL+/VOL- sit on two of the pins the
  * other board used for its volume button (PA0 / PB2 / PC13).

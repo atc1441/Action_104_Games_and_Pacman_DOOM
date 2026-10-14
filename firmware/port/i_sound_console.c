@@ -6,8 +6,8 @@
  * Makefile filters that file out.
  *
  * The mixer is the classic DOOM one: eight channels, nearest-neighbour
- * resampling, summed into an unsigned buffer that sdk/audio.c streams to
- * the DAC by DMA.
+ * resampling, summed into an unsigned buffer that sdk/audio.c streams by
+ * DMA into TIM1, which plays it as 8-bit PWM.
  *
  * Sample data is NOT copied into RAM. DOOM's DS* lumps are read straight
  * out of the memory-mapped flash, the same trick the WAD itself uses -
@@ -27,32 +27,33 @@
 #include "audio.h"
 #include "input.h"
 
-const int snd_samplerate = 14016;
-
 /*
- * Output rate, measured rather than assumed: audio_blocks() counts
- * completed DMA blocks, and 741 samples per block over 12 seconds gave
- * 14016 Hz (a 3-second run gave 14071, so it is stable). Forest Kid's
- * live descriptor reloads 737 samples; the DAC divider is unchanged, so
- * the rate stands until it is measured again.
- *
- * The DAC's rate divider was never identified in the register map, so
- * this number comes from the stopwatch, not the datasheet. If you change
- * the DAC configuration in sdk/audio.c, measure it again.
+ * Output rate, set from audio_rate() at init. TIM1 requests one sample per
+ * PWM period and the driver picks the period for ~44.1 kHz, so the exact
+ * rate depends on the core clock.
  */
-#define OUT_RATE 14016u
+static uint32_t out_rate;
 
 #define NUM_CHANNELS 8
 
-/* 16.16 fixed point position, so a sound of any rate resamples to ours */
+/*
+ * 16.16 fixed point position, so a sound of any rate resamples to ours.
+ *
+ * audio_fill() runs in the SysTick interrupt and I_StartSound() in the
+ * game, which the interrupt can preempt. A channel is only read while
+ * `active` is set, and I_StartSound() clears it before rewriting the
+ * other fields and sets it last, with compiler barriers in between.
+ */
 typedef struct {
     const uint8_t *data;      /* points into XIP flash */
     uint32_t       len;       /* samples */
     uint32_t       pos;       /* 16.16 */
     uint32_t       step;      /* 16.16 increment per output sample */
     int            vol;       /* 0..127 as DOOM hands it over */
-    int            active;
+    volatile int   active;
 } chan_t;
+
+#define COMPILER_BARRIER() __asm volatile ("" ::: "memory")
 
 static chan_t chans[NUM_CHANNELS];
 static int    sound_ready;
@@ -107,11 +108,13 @@ int I_StartSound(int id, int channel, int vol, int sep)
 
     chan_t *c = &chans[channel];
     c->active = 0;                  /* stop before rewriting the fields */
+    COMPILER_BARRIER();
     c->data = p + 8;
     c->len  = count;
     c->pos  = 0;
-    c->step = (rate << 16) / OUT_RATE;
+    c->step = (rate << 16) / out_rate;
     c->vol  = vol;
+    COMPILER_BARRIER();
     c->active = 1;
 
     return channel;
@@ -119,15 +122,12 @@ int I_StartSound(int id, int channel, int vol, int sep)
 
 #ifdef AUDIO_SELFTEST
 /*
- * Temporary: work out what the DAC actually wants.
+ * Output self-test: a square wave through five sample formats in turn,
+ * each at its own pitch, so a listener can tell which one comes through.
+ * With ARR = 255 the right one is format 1: CCR1 takes 0..255, and the
+ * other formats put most values outside the PWM range.
  *
- * Faint noise and no tone means either the level is far too low or the
- * sample format is wrong, and those two look identical from the outside.
- * So instead of guessing, play a square wave through five candidate
- * formats in turn, each at its own pitch, and let a human say which one
- * came through:
- *
- *   1  220 Hz   8-bit unsigned, mid 128       (what the mixer does now)
+ *   1  220 Hz   8-bit unsigned, mid 128       (what the mixer does)
  *   2  330 Hz   12-bit unsigned, mid 2048
  *   3  440 Hz   16-bit unsigned, mid 32768
  *   4  660 Hz   16-bit signed
@@ -144,8 +144,8 @@ void audio_fill(uint16_t *dst, unsigned n)
     static unsigned variant;
     static unsigned phase;
 
-    const uint32_t tone    = OUT_RATE * 2u;
-    const uint32_t silence = OUT_RATE / 2u;
+    const uint32_t tone    = out_rate * 2u;
+    const uint32_t silence = out_rate / 2u;
 
     for (unsigned i = 0; i < n; i++) {
         if (t >= tone + silence) { t = 0; variant = (variant + 1) % 5; }
@@ -161,7 +161,7 @@ void audio_fill(uint16_t *dst, unsigned n)
                 default: v = 0x8000; break;
             }
         } else {
-            const uint32_t half = OUT_RATE / (2u * st_hz[variant]);
+            const uint32_t half = out_rate / (2u * st_hz[variant]);
             phase++;
             if (phase >= 2u * half) phase = 0;
             const int high = phase < half;
@@ -182,8 +182,8 @@ void audio_fill(uint16_t *dst, unsigned n)
 /*
  * Called from sdk/audio.c when a DMA block has been consumed.
  *
- * Output is unsigned with 128 as silence, matching what the stock
- * firmware feeds this DAC. The accumulator is signed so that channels can
+ * Output is unsigned 0..255 with 128 as silence, matching what the stock
+ * firmware feeds TIM1 (ARR = 255, so that is the full duty-cycle range). The accumulator is signed so that channels can
  * cancel; it is clamped rather than wrapped, because wrapping a mix turns
  * a loud moment into a burst of noise.
  */
@@ -233,9 +233,10 @@ void I_InitSound(void)
     for (unsigned i = 0; i < NUM_CHANNELS; i++) chans[i].active = 0;
 
     audio_init();
+    out_rate = audio_rate();
     sound_ready = 1;
 
-    lprintf(LO_INFO, "I_InitSound: DAC ready");
+    lprintf(LO_INFO, "I_InitSound: TIM1 PWM at %lu Hz", (unsigned long)out_rate);
 }
 
 /*

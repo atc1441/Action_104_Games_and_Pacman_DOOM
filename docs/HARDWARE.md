@@ -48,7 +48,7 @@ is an NES emulator (`checkNESMagic: skipped rom with invalid mapper #%d`).
 |---|---|
 | `0x00000000` | Boot ROM, 32 KB, mirrored every 32 KB |
 | `0x08000000` | External SPI flash, 4 MB, memory-mapped (XIP). Alias at `0x0C000000`. |
-| `0x08004000` | Where the bootloader jumps |
+| `0x08004000` | Where the bootloader (boot ROM) jumps. Below it, only a 256-byte header at `0x08000000`, no code. |
 | `0x20000000`-`0x20045FFF` | SRAM, **280 KB** |
 | `0x40000000`, `0x48000000`, `0x50000000`, `0x52000000` | peripherals |
 | `0x60000000`-`0x60001FFF` | security / crypto block, holds the reference clock value |
@@ -68,7 +68,7 @@ ACM32G103 / ACM32H5 SDK headers (see
 
 | Peripheral | Base | Aisinochip SDK name |
 |---|---|---|
-| RCC | `0x40021000` (clock enables at `+0x28`, `+0x2C`, `+0x38`) | `RCC` (register layout differs from both SDKs) |
+| RCC | `0x40021000` (clock enables at `+0x28`, `+0x2C`, `+0x34`, `+0x38`, see [RCC](#rcc-clock-enables)) | `RCC` (register layout differs from both SDKs) |
 | GPIOA / GPIOB / GPIOC | `0x48000000` / `0x48000400` / `0x48000800` | `GPIOA` / `GPIOB` / `GPIOC` |
 | SPI (LCD) | `0x40030000` | `SPI1` |
 | MPI / SPI (flash) | `0x52005000` - do not touch, XIP runs through it | `SPI7` (H5), memory window `0x08000000` |
@@ -76,11 +76,72 @@ ACM32G103 / ACM32H5 SDK headers (see
 | Audio | `0x40012C00` | `TIM1` - see [Audio](#audio) |
 | DMA | `0x40031000` | `DMA1` (G103) |
 
+### RCC clock enables
+
+Neither SDK matches the RCC layout, so the bits are identified from what
+the stock code configures right after setting each one. Sources: both
+applications' board init (104 Games `0x0802A824`, PAC-MAN `0x08014540`),
+LCD init (`0x0802FC38` / `0x08016A84`), audio and DMA setup (104 Games
+`0x0803F080`, PAC-MAN `0x08007218`), and the boot ROM's UART MSP init
+(`0x00002C94`), GPIO setup (`0x000028C8`) and EXTI setup (`0x00006370`).
+
+**Verified**: set right before one peripheral is configured, and only
+there.
+
+| Register | Bit | Clocks | Evidence |
+|---|---|---|---|
+| `+0x28` | 0 | DMA1 (`0x40031000`) | set right before `DMA1.CONFIG = 1` in both audio setups; the LCD init, whose pixel transfers use DMA, sets it too |
+| `+0x28` | 10 | SPI1, the LCD controller | set right before the SPI1 setup in both LCD inits |
+| `+0x2C` | 0 | GPIOA | before every GPIOA init |
+| `+0x2C` | 1 | GPIOB | the boot ROM sets it alone before a GPIOB-only init, and in its USART2 (PB0/PB1) branch |
+| `+0x2C` | 2 | GPIOC | the boot ROM sets it alone before a GPIOC-only init |
+| `+0x34` | 17 | USART2 | boot ROM UART MSP init, USART2 branch |
+| `+0x38` | 6 | TIM1 | cleared, then set, right before the TIM1 setup in both audio inits |
+| `+0x38` | 9 | USART1 | boot ROM UART MSP init, USART1 branch, and the 104 Games USART1 setup; never set near the DMA |
+
+**Assumed**:
+
+| Register | Bit | Observation | Assumption |
+|---|---|---|---|
+| `+0x38` | 4 | set with every GPIO clock enable, and before the boot ROM's accesses to `0x40010400`, the EXTI block `HAL_GPIO_Init` writes | EXTI clock |
+| `+0x38` | 6 | the off/on toggle before the TIM1 setup | that the toggle also resets TIM1 |
+
+**Set by the stock firmware, not by this one**: `+0x28` bit 1, which the
+stock LCD init sets next to bit 0. Nothing identifies it. This firmware
+leaves it clear: after a cold boot `+0x28` reads `0x10000421`, and the
+display, its DMA channel, the sound and all the buttons work.
+
+**Set by the boot ROM**: its reset routine (`0x000007FC`), which ends by
+jumping to `0x08004000`, ORs these in before touching the flash interface
+and the other peripherals. They are all set together, so nothing ties a
+bit to one peripheral; this firmware leaves them as they are.
+
+| Register | Boot ROM sets | Running value under DOOM | Remaining bits |
+|---|---|---|---|
+| `+0x28` | `0x00000020` (bit 5) | `0x10000421` | 0, 10 ours; **28 set by no code found** |
+| `+0x2C` | `0x07C00004` (bits 2, 22-26) | `0x07C00007` | 0, 1, 2 ours (GPIOC also set by the boot ROM) |
+| `+0x30` | `0x00000011` | `0x00000011` | not used by this firmware |
+| `+0x34` | `0x08000000` (bit 27) | `0x08020000` | 17 ours |
+| `+0x38` | `0x00000001` (bit 0) | `0x00000251` | 4, 6, 9 ours |
+
+`+0x28` bit 28 is written neither by the boot ROM (its `+0x28` writes are
+`0x20` on the normal boot path, `0x10` and `0x800` in download mode) nor
+by this firmware. A power-on default or a read-only status bit is
+assumed. It cannot be checked over SWD: a `reset halt` (SYSRESETREQ)
+leaves the RCC enables as they were, and without the reset pin the core
+cannot be stopped before the boot ROM runs.
+
+`firmware/sdk/soc.h` names them `RCC_EN0` (`+0x28`), `RCC_EN1` (`+0x2C`),
+`RCC_EN3` (`+0x34`) and `RCC_EN2` (`+0x38`), each bit tagged `[V]` or
+`[A]` as above.
+
 ### UART
 
 The boot ROM logs over **USART2** (`0x40004400`) at **115200 8N1**. Handle
-setup is `FUN_00002e5c`; byte send is `FUN_00002d64`. Pins are **PB0 and
-PB1**, AF 1 (`FUN_00002c94`). RCC `+0x34` bit 17 clocks the block.
+setup is `FUN_00002e5c`; byte send is `FUN_00002d64`; `FUN_00002c60`
+sets the control register. Pins are **PB0 and PB1**, AF 1
+(`FUN_00002c94`). The layout below also matches the 104 Games
+`HAL_UART_Transmit` (`0x08005708`). RCC `+0x34` bit 17 clocks the block.
 
 Register layout (not STM32 USART):
 
@@ -110,15 +171,49 @@ each offset:
 | Offset | Register | SDK name |
 |---|---|---|
 | `+0x00` | MODER, 2 bits per pin | `MD` |
-| `+0x08` | **PUPDR**, 2 bits per pin, `01` = pull-up (not OSPEEDR) | `PUPD` |
+| `+0x04` | output type, 1 = open drain | `OTYP` |
+| `+0x08` | **PUPDR**, 2 bits per pin, `01` = pull-up, `10` = pull-down (not OSPEEDR) | `PUPD` |
 | `+0x0C` | **IDR** (not `+0x10`) | `IDATA` |
 | `+0x14` | **BSRR**, set in low 16, reset in high 16 (not `+0x18`) | `BSC` |
-| `+0x18` / `+0x1C` | - | `AF0` / `AF1`, alternate function, 4 bits per pin |
-| `+0x20` / `+0x24` | AFRL / AFRH (assumed in `soc.h`, not proven) | `DS0` / `DS1`, drive strength |
-| `+0x28` | - | `SMIT` |
+| `+0x18` / `+0x1C` | alternate function, 4 bits per pin (pins 0-7 / 8-15) | `AF0` / `AF1` |
+| `+0x20` | drive strength, **2 bits per pin, all 16 pins** | `DS0` |
+| `+0x24` | never written by the stock HAL | `DS1` |
+| `+0x28` | Schmitt input enable, 1 bit per pin | `SMIT` |
 
-In the Aisinochip SDKs the alternate-function registers are at
-`+0x18`/`+0x1C`. `firmware/sdk/uart.c` writes the AF value to both pairs.
+The stock firmware's own `HAL_GPIO_Init` (104 Games `0x08004B20`, boot ROM
+`0x00001FEC`) gives the offsets from `+0x18` onwards. It writes the AF
+number at `+0x18`/`+0x1C` (AF mode only), drive strength and output type
+(output and AF modes), pull, then ORs the pin into `SMIT`, and writes the
+mode last. The drive field is 2 bits per pin in `+0x20`. The G103 and H5
+SDKs and user manuals use 4 bits per pin over `DS0`/`DS1`, so this is one
+place where the chip differs from both parts (details in
+[SOC_IDENTIFICATION.md](SOC_IDENTIFICATION.md#gpio)). `gpio_config()` in
+`firmware/sdk/soc.h` does the same steps for a single pin.
+
+The init structure is `{Pin mask, Mode, Pull, Drive, Alternate}`, with the
+SDK's mode values (`2` = AF push-pull, `0x12` = AF open drain). The HAL's
+parameter check also gives the bonded pins: GPIOA `0xFF3F` (**no PA6 or
+PA7**), GPIOB `0x00FF`, GPIOC `0xE1FF`.
+
+Every pin the stock 104 Games firmware configures:
+
+| Pins | Mode | Pull | Drive | AF | Use |
+|---|---|---|---|---|---|
+| PA3, PA4 | AF | up | 0 | 0 | LCD SPI1 SCK, MOSI |
+| PA1, PA2 | out | up | 0 | | LCD DC, CS |
+| PA8 | out | none | 0 | | backlight (PAC-MAN: panel reset) |
+| PA9, PA10 | AF | up | 3 | 1 | USART1 (PA11/PA12 too if flow control is on) |
+| PA15 | AF | down | 3 | 2 | **TIM1 channel 1, the speaker** |
+| PA5, PC13-15 | in | up | | | battery sense |
+| PA0/11/12, PB0-7, PC6/7/8/13 | in | up | | | buttons |
+
+The boot ROM puts USART2 on PB0/PB1 the same way as USART1: AF 1, pull-up,
+drive 3.
+
+The three STM32 deviations come from the stock code: the key scan
+(copied to SRAM at `0x20036000`) reads IDR at `+0x0C`, the LCD routine at
+`0x0802FC3E` drives DC/CS through BSRR at `+0x14`, and `HAL_GPIO_Init`
+writes the pulls at `+0x08` (`0x08004C5A`).
 
 The PUPDR offset in particular cost real time: with OSPEEDR assumed there,
 input init never enabled a pull-up, every input floated, and pressing a
@@ -140,6 +235,14 @@ Both instances share the same IP block.
 | `+0x24` | start | `CS` |
 | `+0x2C` | XIP command register: `0x00040000` = manual, `0x05441849` = XIP | `MEMO_ACC` |
 | `+0x30` | XIP read command, `0xFAEB` | `CMD` |
+
+The offsets come from the stock byte-send sequence at
+`0x0803000A`..`0x08030024`, repeated unrolled up to `0x08032492`. The boot
+ROM's own SPI routine (`0x2B60`) sets the length once and then pushes
+bytes while the TX FIFO has room; `lcd.c` sends commands the same way.
+The boot ROM's `FUN_00002800` writes the low 16 bits of the flash
+controller's `+0x04`, which stock `app_board_init` checks before running
+its SRAM stub.
 
 `+0x2C` is the actual switch between "controller fetches on its own" and
 "we push bytes through the FIFO". Bits 5:6 of `+0x08` are not, despite
@@ -163,9 +266,10 @@ On this device Fref is 15,525,065 Hz and `+0x4C` is `0x326` (M=38, P=3,
 Q=0), giving 194.06 MHz - which is what the stock firmware runs at.
 
 The bootloader hands over at 16 MHz. `clock_init()` in
-`firmware/sdk/clock.c` replicates the stock SystemInit (~62 MHz) and then
-`clock_boost()` takes the PLL to **~194 MHz**, matching stock
-`app_board_init`. Confirmed live: `source=3`, `R20=0x80002400`,
+`firmware/sdk/clock.c` replicates the stock SystemInit (`0x08025354` -
+`0x0802549C`, called first by the reset handler at `0x08004118`), which
+gives ~62 MHz, and then `clock_boost()` takes the PLL to **~194 MHz**,
+matching stock `app_board_init`. Confirmed live: `source=3`, `R20=0x80002400`,
 `PLLCFG=0x326`, `g_cpu_hz=194063312`, hostbox `mark=9`.
 
 ### Clock boost (what actually failed, and what fixed it)
@@ -176,14 +280,16 @@ the abstract. Three things all have to be true:
 
 1. **MPI retune from RAM.** A `.ramfunc` ORs `0x100` into MPI `+0x10` and
    keeps divider 2 *before* the source switch. Stock copies a Thumb stub
-   to SRAM for the same reason (`0xF8413A01` / `0xD1F90F04`).
-2. **The rest of the sequence, including OSC bit 3 and R20 `0x2400`.**
+   to SRAM (`0x20000000`) for the same reason (`0xF8413A01` /
+   `0xD1F90F04`).
+2. **The rest of the sequence, including OSC bit 3 and R20 `0x2400`**
+   (bits 13:8 = `0x24`, a `BFI` at `0x0802B186`).
    Missing those looks like a PLL that "worked" and then died.
 3. **Do not attach SWD across `RCC+0x1C` source=`3`.** That desyncs the
    MEM-AP even if the CPU is halted. Flash with `--leave-halted` and
    power-cycle with the probe idle. Attach is safe *after* the switch.
 
-A 61 MHz image (build without `-DENABLE_CLOCK_BOOST` in the Makefile) is
+A 62 MHz image (`make CLOCK_BOOST=0`, output in `build/<board>-62mhz/`) is
 the fallback if a boost flash goes wrong: no source switch, so SWD stays
 attachable.
 
@@ -212,7 +318,12 @@ Two things that will bite anyone rebuilding this driver:
   byte means no parameter ever arrives. This is easy to miss, because the
   stock firmware has already configured the panel before you flash over it:
   the picture looks right while your own init does nothing. Only after a
-  power cycle does the truth show up.
+  power cycle does the truth show up. The stock window routine
+  (`0x08005968`) holds CS this way.
+
+The window commands `0x2A`/`0x2B`/`0x2C` are not part of the init: the
+stock fill routine (`0x0800586C`) sends them. It pushes the picture one
+line at a time from a line buffer at `0x20044BEC`, as `lcd.c` does.
 
 ### PAC-MAN
 
@@ -324,8 +435,8 @@ configure PWM:
 | `+0x34` | | `CCR1` | duty cycle - DMA writes each sample here |
 | `+0x44` | `0x00008000` | `BDTR` | bit 15 MOE, main output enable |
 
-`RCC+0x38` bit 6 is toggled off and on around the setup - that is the
-block's reset.
+The TIM1 clock (`RCC+0x38` bit 6) is switched off and on again before
+the setup, see [RCC](#rcc-clock-enables).
 
 ### DMA
 
@@ -334,14 +445,14 @@ The controller at `0x40031000` matches the ACM32G103's `DMA1`: `+0x08`
 `CONFIG` (bit 0 `EN`), and per channel `CXSRCADDR`, `CXDESTADDR`, `CXLLI`,
 `CXCTRL`, `CXCONFIG`.
 
-Channels are `0x40` apart from `0x40031100` in `soc.h`. The Aisinochip
-SDKs space channels `0x20` apart, so the address used for channel 1
-(`0x40031140`) is the one the SDKs call channel 2. Two are in use:
+Channel *n* sits at `0x40031100 + n * 0x20`, as in the Aisinochip SDKs,
+and `soc.h` uses that numbering. The stock firmware programs two
+channels, `0x40031100` and `0x40031140`:
 
-| Channel | Destination |
-|---|---|
-| 0 | `0x40012C34` - the audio data register |
-| 1 | `0x40030000` - the LCD SPI data register |
+| Channel | Address | Destination |
+|---|---|---|
+| 0 | `0x40031100` | `0x40012C34` - the audio data register |
+| 2 | `0x40031140` | `0x40030000` - the LCD SPI data register |
 
 Channel 0 while Forest Kid plays: source walking the ping-pong buffers,
 `+0x08` stuck at the descriptor (`0x20044BA0`), `+0x0C` high half `0x8540`
@@ -352,7 +463,7 @@ Global `+0x14` bit 0 is "channel done" and `+0x08` acknowledges it. The
 stock mixer waits on that bit; a self-looping descriptor also lets the
 channel keep running if the bit is a pulse the poller can miss.
 
-Channel 1 drives the LCD SPI data register. Stock `FUN_08027464` programs
+Channel 2 drives the LCD SPI data register. Stock `FUN_08027464` programs
 a one-shot (NEXT = 0, not the audio self-loop): SRC = line buffer, DST =
 `0x40030000`, CTRL = `0x04120000 | byte_length`, CFG = `0x00010003`, then
 SPI `+0x20` = length, `+0x0C` bits `0x1d`, start `+0x24` bit 0, and
@@ -375,24 +486,53 @@ down, PC13 bounce) and prints `AudioVolume:%d`. DOOM does the same in
 Output is **8-bit PWM**: with `ARR` = 255 the duty cycle in `CCR1` has 256
 steps, which matches the 8-bit source samples.
 
-### Bringing it up: three things that were not in the code
+### Bringing it up: enables beyond the TIM1 registers
 
-Replaying the observed TIM1 registers was not enough. Three separate
-enables had to be found by diffing the whole peripheral state against the
-stock firmware while it was playing:
+Replaying the observed TIM1 registers is not enough:
 
-* **`RCC+0x28` bits 0-1 and `RCC+0x38` bit 9.** Without them the DMA
-  controller has no clock, and its channel registers read back as zero no
-  matter how often you write them.
+* **The DMA1 clock, `RCC+0x28` bit 0.** With it and `RCC+0x38` bit 9
+  both clear, the DMA channel registers read back as zero
+  no matter how often they are written.
 * **`0x40031030` = 1**, the DMA controller's master enable. This one is
   nasty: with it clear, the channel registers accept writes, read back
   correctly, and report the channel as enabled - and nothing moves.
 
-The output rate is **~14 kHz**, measured by counting completed DMA blocks
-(741 samples each) over 12 seconds. TIM1 requests one sample per period,
-so the rate is `f_TIM / ((PSC + 1) * (ARR + 1))` = `f_TIM / 4352`: the
-measured 14,016 Hz corresponds to a 61.0 MHz timer clock. `+0x18` is
-`CCMR1`, not a divider.
+### Sample rate
+
+TIM1 requests one sample per PWM period, so the sample rate and the PWM
+carrier are the same frequency: `f_TIM / ((PSC + 1) * (ARR + 1))`. `+0x18`
+is `CCMR1`, not a divider.
+
+The timer clock is the core clock, run through the APB prescaler in
+`RCC+0x20` bits 13:11 (`4` = /2 ... `7` = /16) and doubled whenever that
+prescaler divides. The PAC-MAN stock audio init computes it that way and
+sets `PSC = round(f_TIM / (44100 * 256)) - 1`, aiming at 44.1 kHz so the
+carrier stays inaudible. At 194 MHz that gives `PSC` = 16, the value the
+104 Games stock firmware runs with: 44,591 Hz.
+
+`firmware/sdk/audio.c` computes `PSC` the same way at start-up and
+`audio_rate()` gives the mixer the resulting rate: 44,591 Hz at 194 MHz
+(`PSC` = 16), 40,494 Hz at 62.2 MHz (`PSC` = 5).
+
+Both clocks were checked against recordings of the speaker, timed by the
+recorder's own clock and compared with the pistol sound (`DSPISTOL`) from
+the WAD:
+
+* At 194 MHz the pistol plays at exactly the expected speed (best fit
+  x1.000 in 0.002 steps), which also shows the recorder's clock is
+  accurate.
+* At the clock of `CLOCK_BOOST=0` it played 1.018 times too fast when the
+  firmware assumed 61.2 MHz, and a run whose buffers were replayed
+  repeated every 15.17 ms (737 samples at `PSC` = 4). Both give a core
+  clock of about 62.2 MHz, the value `CPU_HZ_BASE` in
+  `firmware/sdk/clock.c` uses.
+
+The SysTick interrupt checks every 2 ms whether the DMA has moved on to
+the other buffer, and refills the idle one. A 737-sample buffer lasts
+16.5 ms at 194 MHz and 18.2 ms at 62 MHz, less than a frame takes at
+62 MHz, so the refill cannot wait for the game loop: a late refill makes
+the DMA replay the old buffer. Recordings of both images play the sounds
+at the right speed with no replayed buffers.
 
 ### Where it stands
 
@@ -409,8 +549,7 @@ What was proven along the way:
 * sound does come out - one build produced a loud tone through the
   speaker, so the whole path from RAM to speaker is real
 * the mixer receives sounds correctly: a menu blip arrived with the right
-  length and a resampling step of `0xC95E`, which is exactly
-  11025/14016
+  length and the resampling step for 11025 Hz source data
 
 The reload mechanism is one **8-word self-looping descriptor**. Forest
 Kid live at `0x20044BA0`:
@@ -434,12 +573,10 @@ stalled; the self-loop is what actually runs.
 
 Two smaller findings worth keeping:
 
-* GPIOA `+0x1C` and `+0x28` have to be set (the stock has `0x20000114`
-  and `0x00009F3F`). Without them the channel arms and then sits there,
-  because TIM1 never raises a request. Writing them by assignment
-  rather than OR takes the debug port down - PA13/PA14 are SWD on the
-  same port. In the Aisinochip SDKs these offsets are `AF1` (alternate
-  function for pins 8-15, which include PA13/PA14) and `SMIT`.
+* PA15 has to be TIM1's output: AF mode, alternate function 2, pull-down,
+  drive 3. Both stock firmwares configure it so right after the TIM1
+  setup. Writing whole GPIOA registers takes the debug port down
+  (PA13/PA14 are SWD), so `gpio_config()` only touches the one pin.
 * The engine side is done: GBADoom's `i_audio.c` is GBA/Maxmod only, so
   `i_sound_console.c` replaces it with an eight-channel mixer reading the
   `DS*` lumps straight out of XIP flash.

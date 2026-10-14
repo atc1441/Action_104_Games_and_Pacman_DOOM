@@ -1,7 +1,7 @@
 /*
  * DOOM image: XIP from flash, all of RAM for heap and framebuffer.
  *
- * The bootloader jumps to 0x08004000 and expects an initial SP and reset
+ * The boot ROM jumps to 0x08004000 and expects an initial SP and reset
  * handler there. Its own RAM below 0x20002000 is not needed after the
  * handover and is free for us.
  *
@@ -11,10 +11,7 @@
  * answers for absent memory, not a fill pattern. Do not be fooled by it.
  *
  * At the very bottom sits a small fixed area for the mailbox the host
- * reads over SWD. Earlier versions used guessed addresses around
- * 0x2000FD00, which land inside the zone heap - it starts past .bss
- * around 0x2000F870 and grows over them, so firmware and host quietly
- * overwrote each other. Down here the space is permanently free (the
+ * reads over SWD, below the zone heap. The space is permanently free (the
  * vector table lives in flash) and the addresses stay put no matter how
  * .bss grows.
  */

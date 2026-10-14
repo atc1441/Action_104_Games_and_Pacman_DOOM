@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
 Recover a console whose firmware wedges the debug bus, using OpenOCD
-and a Pico debugprobe (CMSIS-DAP).
+and any CMSIS-DAP probe.
 
 Same idea as rescue.py (J-Link): hammer attach-and-halt while you
 power-cycle the console. nRESET is not on the board.
 
   python rescue_openocd.py
   python rescue_openocd.py --write ../firmware/build/action104/doom.bin --addr 0x08004000
+  python rescue_openocd.py --serial <probe serial>   # with several probes plugged in
 """
 import argparse
 import os
@@ -19,17 +20,19 @@ import flash_openocd
 import ocd
 
 
-def try_catch_once():
+def try_catch_once(serial=None):
     """Spawn a fresh OpenOCD, halt, return the session or None."""
     subprocess.call(['killall', '-9', 'openocd'],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(0.05)
     log = open('/tmp/openocd-rescue.log', 'ab', buffering=0)
+    args = ['openocd', '-f', ocd.CFG,
+            '-c', 'gdb_port disabled',
+            '-c', 'telnet_port disabled']
+    if serial:
+        args += ['-c', 'adapter serial %s' % serial]
     proc = subprocess.Popen(
-        ['openocd', '-f', ocd.CFG,
-         '-c', 'gdb_port disabled',
-         '-c', 'telnet_port disabled',
-         '-c', 'adapter serial EB1FC28122DFFC1B'],
+        args,
         stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
     proc._log = log
     dev = ocd.OpenOcd(proc=proc)
@@ -68,6 +71,8 @@ def main():
     ap.add_argument('--write', metavar='FILE',
                     help='flash this file once the core is caught')
     ap.add_argument('--addr', default='0x08004000')
+    ap.add_argument('--serial',
+                    help='CMSIS-DAP probe serial, if more than one is plugged in')
     args = ap.parse_args()
 
     print("Hammering OpenOCD attach attempts. Interrupt the console's power now -\n"
@@ -78,7 +83,7 @@ def main():
     t0, tries, dev = time.time(), 0, None
     while time.time() - t0 < args.window:
         tries += 1
-        dev = try_catch_once()
+        dev = try_catch_once(args.serial)
         if dev is not None:
             break
     dt = time.time() - t0

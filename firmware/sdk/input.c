@@ -27,24 +27,15 @@ const unsigned input_num_pins = NUM_KEYS;
 
 void input_init(void)
 {
-    /* Clocks for GPIOA/B/C. The stock application sets bit 0 of RCC_EN1
-     * for GPIOA; the bits for B and C are not identified yet, so set the
-     * low three to be safe. */
-    RCC_EN1 |= 0x7u;
+    RCC_EN1 |= RCC_EN1_GPIOA | RCC_EN1_GPIOB | RCC_EN1_GPIOC;
+    RCC_EN2 |= RCC_EN2_EXTI;
 
     for (unsigned i = 0; i < NUM_KEYS; i++) {
         const uint32_t port = board_keys[i].pin.port;
         const uint32_t pin  = board_keys[i].pin.pin;
 
-        gpio_mode(port, pin, GPIO_MODE_IN);
-
-        /* Enable the pull-up. Without it the inputs float and a button
-         * pressed against ground changes nothing - several measurement
-         * attempts died on exactly that. */
-        uint32_t pu = GPIO_PUPDR(port);
-        pu &= ~(3u << (pin * 2));
-        pu |=  (1u << (pin * 2));      /* 01 = pull-up */
-        GPIO_PUPDR(port) = pu;
+        /* Input with pull-up: the buttons pull to ground. */
+        gpio_config(port, pin, GPIO_MODE_IN, GPIO_PULL_UP, 0, 0);
     }
 
 #ifdef BOARD_HAS_VOL_BUTTON
@@ -57,11 +48,7 @@ void input_init(void)
         for (unsigned i = 0; i < 3; i++) {
             const uint32_t port = vol_pins[i].port;
             const uint32_t pin  = vol_pins[i].pin;
-            gpio_mode(port, pin, GPIO_MODE_IN);
-            uint32_t pu = GPIO_PUPDR(port);
-            pu &= ~(3u << (pin * 2));
-            pu |=  (1u << (pin * 2));
-            GPIO_PUPDR(port) = pu;
+            gpio_config(port, pin, GPIO_MODE_IN, GPIO_PULL_UP, 0, 0);
         }
     }
 #endif
@@ -144,11 +131,11 @@ uint32_t input_raw(void)
  * cycle. SRAM access is fine. So the firmware mirrors the input registers
  * to a fixed address and the host only ever reads.
  *
- * Note what this deliberately does NOT do: reconfigure pins. A first
- * version set every unused pin to input with a pull-up, which crashed the
- * console at startup - something on one of those pins is needed as an
- * output. The registers are published exactly as the bootloader and
- * input_init() leave them.
+ * Note what this deliberately does NOT do: reconfigure pins. Setting
+ * every unused pin to input with a pull-up crashes the console at
+ * startup - something on one of those pins is needed as an output. The
+ * registers are published exactly as the boot ROM and input_init() leave
+ * them.
  * ------------------------------------------------------------------ */
 void input_scan_init(void)
 {

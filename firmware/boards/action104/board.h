@@ -40,32 +40,18 @@
 #define LCD_PIN_BL    8         /* backlight, active HIGH */
 
 /*
- * Pin and controller configuration as it stands while the stock firmware
- * runs. Read off the live device, not derived.
- *
- * The alternate-function numbers are why an early attempt hung forever:
- * putting a pin into AF mode is not enough, you also have to say WHICH
- * function. Without AFRL nothing reaches SCK/MOSI and the "TX done" wait
- * loop never finishes.
+ * Controller configuration as it stands while the stock firmware runs.
+ * Read off the live device, not derived. The pins are set up in lcd.c.
  */
-#define BOARD_LCD_MODER      0x00010294u   /* pins 0..5 + PA8 (backlight) */
-#define BOARD_LCD_MODER_MASK 0x00033FFFu
-#define BOARD_LCD_AFRL       0xC03C0000u   /* PA4 -> AF12, PA5 -> AF3     */
-#define BOARD_LCD_PUPDR      0xA5540555u
 #define BOARD_LCD_SPI_MODE   0x00002881u   /* +0x08: bits 0 and 7 required */
 #define BOARD_LCD_SPI_RXCTL  0x00000100u   /* +0x10 bit 8 - the same bit the
                                             * stock SRAM stub sets on the
                                             * flash controller             */
 
 /*
- * Panel init, reconstructed from the stock firmware
- * (flash 0x0802FE06 .. 0x08032492). In the original the sequence is fully
- * unrolled - roughly 0x84 bytes of code per transferred byte, including
- * delay and status polling. Here it is one table.
- *
- * Note the first four bytes: FE, EF, 36 E8. An earlier extraction started
- * at 0x08030000 and cut them off, which lost MADCTL - the panel came up
- * rotated and in RGB instead of BGR.
+ * Panel init, reconstructed from the stock firmware. In the original the
+ * sequence is fully unrolled - roughly 0x84 bytes of code per transferred
+ * byte, including delay and status polling. Here it is one table.
  *
  * Raw byte sequence, exactly the order the stock firmware sends (75 bytes):
  *
@@ -81,7 +67,7 @@
  *   11  29
  *
  * The window commands (0x2A/0x2B/0x2C) are NOT part of this sequence; the
- * stock code sets them in its fill routine at 0x0800586C.
+ * stock code sets them in its fill routine.
  */
 typedef struct {
     uint8_t cmd;
@@ -122,24 +108,22 @@ static const lcd_cmd_t board_lcd_init_seq[] = {
 /* ------------------------------------------------------------------ *
  * Buttons
  *
- * Taken from the stock key scan (app_input_poll, flash 0x0803F080; the
- * dense run of IDR reads starting at 0x08041842). It builds a bit mask
- * and stores it at 0x20030329; the debug print next to it reads
- * "get key[%02x]". Each test is LSLS Rx,#n followed by PL or EQ, which
- * means bit 31-n, active low.
+ * Taken from the stock key scan (docs/HARDWARE.md). It builds a bit mask
+ * next to the debug print "get key[%02x]". Each test is LSLS Rx,#n
+ * followed by PL or EQ, which means bit 31-n, active low.
  *
  * The bit order is that of an NES joypad (A, B, Select, Start, Up, Down,
  * Left, Right) - no coincidence on a console whose stock application is
  * an NES emulator ("checkNESMagic: skipped rom with invalid mapper #%d").
  *
- * Then verified on the device by pressing each button and watching the
+ * Verified on the device by pressing each button and watching the
  * mirrored input registers: ten distinct pins, all from the set derived
  * above, and the d-pad landed exactly on the direction bits.
  *
  * Not game buttons:
  *   PB3   - bit 2 ("Select" in the NES byte) is not populated on this
  *           board; it never moved under any press. MENU takes that role.
- *   PA0, PB2, PC13 - stock FUN_0803ec10 watches all three for volume
+ *   PA0, PB2, PC13 - the stock firmware watches all three for volume
  *           (PA0 up, PB2 down, PC13 ping-pongs 0..3 and prints
  *           "AudioVolume:%d"). The case only exposes one volume button;
  *           unused pins stay high via pull-up. Not a game key.

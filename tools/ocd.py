@@ -236,14 +236,54 @@ def spawn(cfg=CFG, extra_args=None):
         raise
 
 
+CPUID_ADDR = 0xE000ED00
+CPUID_STAR_MC1 = 0x631F1320
+
+
+def target_alive(ocd):
+    """True if OpenOCD can actually read the core: probe present, DAP up."""
+    try:
+        return ocd.mdw(CPUID_ADDR)[0] == CPUID_STAR_MC1
+    except Exception:
+        return False
+
+
+def shutdown_existing(ocd, timeout=5.0):
+    """Stop an OpenOCD we did not spawn and wait for its TCL port to free."""
+    try:
+        ocd.cmd('shutdown', ignore_error=True)
+    except Exception:
+        pass
+    if ocd.sock:
+        ocd.sock.close()
+        ocd.sock = None
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        try:
+            socket.create_connection((ocd.host, ocd.tcl_port), 0.2).close()
+        except OSError:
+            return
+        time.sleep(0.1)
+    sys.exit('OpenOCD on port %d did not shut down; kill it (pkill openocd) '
+             'and retry.' % ocd.tcl_port)
+
+
 def connect_or_spawn(cfg=CFG):
-    """Attach to an existing OpenOCD, otherwise start one."""
+    """Attach to an existing OpenOCD that can reach the core, otherwise
+    start one. A server that lost its probe (e.g. USB unplugged for a
+    power cycle) keeps listening but every command fails, so it is shut
+    down and replaced."""
     existing = OpenOcd()
     try:
         existing.connect(timeout=0.4)
-        return existing
     except OpenOcdError:
-        pass
+        existing = None
+    if existing is not None:
+        if target_alive(existing):
+            return existing
+        print('OpenOCD on port %d cannot reach the core, restarting it ...'
+              % TCL_PORT, flush=True)
+        shutdown_existing(existing)
     if not os.path.isfile(cfg):
         sys.exit('OpenOCD config missing: %s' % cfg)
     print('Starting OpenOCD with %s ...' % cfg, flush=True)

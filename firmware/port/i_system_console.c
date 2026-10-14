@@ -34,7 +34,6 @@
 #include "hostbox.h"
 #include "clock.h"
 #include "board.h"
-#include "audio.h"
 #include "uart.h"
 
 /* ------------------------------------------------------------------ *
@@ -237,19 +236,18 @@ void I_ClearWindow_e32(void)     { lcd_fill(0x0000); }
  *
  * Accumulate cycles and convert to tics WITHOUT dividing.
  *
- * The first version kept a 64-bit cycle counter and divided by cycles per
- * tic on every call. The engine calls I_GetTime from tight loops, so
- * __aeabi_uldivmod ended up dominating the entire profile - the game ran,
- * but was unplayably slow. Now it only subtracts and compares, all in
- * 32 bits, and the while loop normally runs zero or one times.
+ * The engine calls I_GetTime from tight loops, and a 64-bit division
+ * (__aeabi_uldivmod) per call dominates the profile. This only subtracts
+ * and compares, all in 32 bits, and the while loop normally runs zero or
+ * one times.
  *
  * The counter is 32 bits wide and wraps after about 22 seconds at 194 MHz
- * (about 70 seconds at 61 MHz), which is exactly why this accumulates
+ * (about 69 seconds at 62 MHz), which is exactly why this accumulates
  * instead of dividing the absolute value.
  * ------------------------------------------------------------------ */
 #define TICRATE_HZ 35u
 
-static uint32_t cycles_per_tic = 61200000u / TICRATE_HZ;
+static uint32_t cycles_per_tic = 62200000u / TICRATE_HZ;
 static uint32_t last_cyc;
 static uint32_t acc_cyc;
 static int      tic_count;
@@ -265,8 +263,6 @@ void I_TimerInit_console(uint32_t core_hz)
 int I_GetTime_e32(void)
 {
     uint32_t now = DWT_CYCCNT;
-
-    audio_service();
 
     acc_cyc += (uint32_t)(now - last_cyc);   /* wrapping is correct here */
     last_cyc = now;
@@ -354,8 +350,8 @@ void I_Quit_e32(void)
  *
  * Used when a finished level has no successor in the trimmed WAD (see the
  * patch in GBADoom/source/g_game.c). SYSRESETREQ takes the whole chip
- * down, the boot ROM runs, the bootloader re-initialises the flash
- * controller and jumps back to 0x08004000 - so the player lands on the
+ * down, the boot ROM runs, re-initialises the flash controller and
+ * jumps back to 0x08004000 - so the player lands on the
  * title screen with everything in a known state, which a software restart
  * of the engine would not give us.
  *
@@ -385,9 +381,8 @@ int main(void)
 {
     clock_init();
 
-    /* Discard a stale error message - SRAM survives a reset, and a
-     * message left over from the previous run has already caused one
-     * wrong diagnosis here. */
+    /* Discard a stale error message - SRAM survives a reset, so one left
+     * over from the previous run would look current. */
     g_hostbox.err_magic  = 0;
     g_hostbox.key_magic  = 0;
     g_hostbox.scan_magic = 0;

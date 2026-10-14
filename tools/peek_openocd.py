@@ -17,7 +17,7 @@ MPI = 0x52005000
 RCC = 0x40021000
 DMA_CH0 = 0x40031100
 DMA_BASE = 0x40031000
-AUDIO = 0x40012C00
+TIM1 = 0x40012C00
 DESC = 0x20044BA0
 STUB = 0x20000000
 CPUID = 0xE000ED00
@@ -64,8 +64,8 @@ def main():
         print("DMA ch0 @ 0x%08X" % DMA_CH0)
         hexdump(DMA_CH0, dev.memory_read32(DMA_CH0, 8))
 
-        print("DAC @ 0x%08X" % AUDIO)
-        hexdump(AUDIO, dev.memory_read32(AUDIO, 20))
+        print("TIM1 (audio PWM) @ 0x%08X" % TIM1)
+        hexdump(TIM1, dev.memory_read32(TIM1, 20))
 
         print("audio descriptor @ 0x%08X" % DESC)
         hexdump(DESC, dev.memory_read32(DESC, 8))
