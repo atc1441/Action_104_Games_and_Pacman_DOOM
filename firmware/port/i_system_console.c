@@ -47,8 +47,14 @@
 /* ------------------------------------------------------------------ *
  * Palette: DOOM hands over 256 RGB888 entries, the panel wants RGB565
  * ------------------------------------------------------------------ */
+/*
+ * Stored byte-swapped: the panel wants the high byte first, and a 16-bit
+ * store on this little-endian core then puts it first in memory.
+ */
 static uint16_t pal565[256];
-static uint8_t  row_rgb[DOOM_W * 2];
+
+/* Two rows, so one can be filled while DMA sends the other. */
+static uint16_t row_rgb[2][DOOM_W];
 
 void I_SetPallete_e32(const byte *pallete)
 {
@@ -58,7 +64,8 @@ void I_SetPallete_e32(const byte *pallete)
         unsigned r = *pallete++;
         unsigned g = *pallete++;
         unsigned b = *pallete++;
-        pal565[i] = (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+        const uint16_t c = (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+        pal565[i] = (uint16_t)((c >> 8) | (c << 8));
     }
 }
 
@@ -146,6 +153,25 @@ static int overlay_pixel(unsigned x, unsigned y)
     return (g[c] & (1u << (y - OVL_Y))) ? 1 : 0;
 }
 
+/* Can source row y / column x touch the overlay? Same bounds as above. */
+static int ovl_row(unsigned y)
+{
+    return !(y + 1 < OVL_Y || y > OVL_Y + OVL_H);
+}
+
+static int ovl_col(unsigned x)
+{
+    return !(x + 1 < OVL_X || x > OVL_X + (sizeof(ovl_text) - 1) * OVL_ADV);
+}
+
+/* Output pixel for an overlay_pixel() result and the source index. */
+static uint16_t ovl_rgb(int ov, byte idx)
+{
+    if (ov < 0)  return pal565[idx];
+    if (ov == 0) return 0x0000;
+    return 0xFFFF;
+}
+
 /* ------------------------------------------------------------------ *
  * Video output
  * ------------------------------------------------------------------ */
@@ -175,39 +201,44 @@ void I_FinishUpdate_e32(const byte *srcBuffer, const byte *pallete,
     lcd_set_window(ox, oy, ox + ow - 1u, oy + oh - 1u);
 
     for (unsigned y = 0; y < oh; y++) {
-        uint8_t *d = row_rgb;
-        for (unsigned x = 0; x < ow; x++) {
-            const unsigned sx = oh - 1u - y;
-            const unsigned sy = x;
-            uint16_t c;
-            const int ov = overlay_pixel(sx, sy);
-            if (ov < 0)       c = pal565[srcBuffer[sy * pix_w + sx]];
-            else if (ov == 0) c = 0x0000;
-            else              c = 0xFFFF;
-            *d++ = (uint8_t)(c >> 8);
-            *d++ = (uint8_t)(c);
+        uint16_t *d = row_rgb[y & 1u];
+        const unsigned sx = oh - 1u - y;      /* one source column per row */
+        const byte *s = srcBuffer + sx;
+
+        if (ovl_col(sx)) {
+            for (unsigned x = 0; x < ow; x++)
+                d[x] = ovl_rgb(overlay_pixel(sx, x), s[x * pix_w]);
+        } else {
+            for (unsigned x = 0; x < ow; x++)
+                d[x] = pal565[s[x * pix_w]];
         }
-        lcd_data_buf(row_rgb, ow * 2u);
+
+        if (y) lcd_data_wait();
+        lcd_data_start((const uint8_t *)d, ow * 2u);
     }
+    lcd_data_wait();
 #else
     lcd_set_window(ORIGIN_X, ORIGIN_Y,
                    ORIGIN_X + pix_w - 1, ORIGIN_Y + rows - 1);
 
     for (unsigned y = 0; y < rows; y++) {
+        uint16_t *d = row_rgb[y & 1u];
         const byte *s = srcBuffer + y * pix_w;
-        uint8_t *d = row_rgb;
 
-        for (unsigned x = 0; x < pix_w; x++) {
-            uint16_t c;
-            const int ov = overlay_pixel(x, y);
-            if (ov < 0)       c = pal565[s[x]];
-            else if (ov == 0) c = 0x0000;
-            else              c = 0xFFFF;
-            *d++ = (uint8_t)(c >> 8);      /* the panel wants MSB first */
-            *d++ = (uint8_t)(c);
+        if (ovl_row(y)) {
+            for (unsigned x = 0; x < pix_w; x++)
+                d[x] = ovl_rgb(overlay_pixel(x, y), s[x]);
+        } else {
+            for (unsigned x = 0; x < pix_w; x++)
+                d[x] = pal565[s[x]];
         }
-        lcd_data_buf(row_rgb, pix_w * 2);
+
+        /* Send this row once the previous one is out; the next row is
+         * converted while it goes. */
+        if (y) lcd_data_wait();
+        lcd_data_start((const uint8_t *)d, pix_w * 2u);
     }
+    lcd_data_wait();
 #endif
 }
 

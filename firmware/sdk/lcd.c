@@ -62,9 +62,10 @@ static void spi_write_cpu(const uint8_t *buf, uint32_t len)
 /*
  * One-shot 8-bit transfer on the LCD DMA channel (NEXT = 0), programmed
  * and torn down as the stock LCD code does. The audio channel is never
- * touched here.
+ * touched here. spi_dma_start() returns as soon as the transfer runs;
+ * spi_dma_finish() waits for it and tears it down.
  */
-static void spi_write_dma(const uint8_t *buf, uint32_t len)
+static void spi_dma_start(const uint8_t *buf, uint32_t len)
 {
     SPI_SR(SPI) = (SPI_SR(SPI) & ~2u) | SR_TXDONE;
 
@@ -78,12 +79,21 @@ static void spi_write_dma(const uint8_t *buf, uint32_t len)
     SPI_CR0C(SPI)  = (SPI_CR0C(SPI) & 0xfffffff6u) | 0x1du;
     SPI_CR24(SPI) |= 1u;
     DMA_GLOBAL_EN |= 1u;
+}
 
+static void spi_dma_finish(void)
+{
     while (!(SPI_SR(SPI) & SR_TXDONE)) { }
 
     SPI_SR(SPI)   |= 0x4002u;
     SPI_CR0C(SPI) &= ~8u;
     SPI_CR24(SPI) &= ~1u;
+}
+
+static void spi_write_dma(const uint8_t *buf, uint32_t len)
+{
+    spi_dma_start(buf, len);
+    spi_dma_finish();
 }
 
 static void spi_write(const uint8_t *buf, uint32_t len)
@@ -134,6 +144,25 @@ void lcd_data_buf(const uint8_t *p, uint32_t n)
     GPIO_CLR(LCD_PORT, LCD_PIN_CS);
     GPIO_SET(LCD_PORT, LCD_PIN_DC);      /* HIGH = data */
     spi_write(p, n);
+    GPIO_SET(LCD_PORT, LCD_PIN_CS);
+}
+
+/*
+ * The same as lcd_data_buf() in two halves, so the caller can prepare the
+ * next buffer while DMA sends this one. n must be more than SPI_DMA_MIN,
+ * p must stay untouched until lcd_data_wait(), and every lcd_data_start()
+ * needs its lcd_data_wait() before anything else goes to the panel.
+ */
+void lcd_data_start(const uint8_t *p, uint32_t n)
+{
+    GPIO_CLR(LCD_PORT, LCD_PIN_CS);
+    GPIO_SET(LCD_PORT, LCD_PIN_DC);      /* HIGH = data */
+    spi_dma_start(p, n);
+}
+
+void lcd_data_wait(void)
+{
+    spi_dma_finish();
     GPIO_SET(LCD_PORT, LCD_PIN_CS);
 }
 

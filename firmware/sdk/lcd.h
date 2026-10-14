@@ -13,6 +13,8 @@ void lcd_cmd(uint8_t c);
 void lcd_cmd_args(uint8_t c, const uint8_t *args, uint32_t n);
 void lcd_data(uint8_t d);
 void lcd_data_buf(const uint8_t *p, uint32_t n);
+void lcd_data_start(const uint8_t *p, uint32_t n);
+void lcd_data_wait(void);
 void lcd_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
 void lcd_fill(uint16_t color);
 
