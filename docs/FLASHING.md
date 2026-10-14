@@ -96,8 +96,8 @@ Unplug the probe, then power-cycle. Do not resume with SWD still attached.
 
 | Range | Contents |
 |---|---|
-| `0x00000000` | Boot ROM, on-chip, 32 KB - not writable, not touched |
-| `0x08000000`-`0x08003FFF` | Bootloader in the SPI flash. Leave it alone: it is what jumps to `0x08004000`. |
+| `0x00000000` | Boot ROM (the bootloader), on-chip, 32 KB - not writable, not touched. It is what jumps to `0x08004000`. |
+| `0x08000000`-`0x08003FFF` | A 256-byte header starting with `T1FF`, the rest blank. No code. Leave it alone: it is presumably flash parameters the boot ROM reads. |
 | `0x08004000`-`0x0808FFFF` | Application. DOOM goes here, ~545 KB. |
 | `0x08090000`-`0x083FFFFF` | WAD (E1M1 + `DS*` lumps), read by pointer through XIP. |
 

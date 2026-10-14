@@ -48,7 +48,7 @@ is an NES emulator (`checkNESMagic: skipped rom with invalid mapper #%d`).
 |---|---|
 | `0x00000000` | Boot ROM, 32 KB, mirrored every 32 KB |
 | `0x08000000` | External SPI flash, 4 MB, memory-mapped (XIP). Alias at `0x0C000000`. |
-| `0x08004000` | Where the bootloader jumps |
+| `0x08004000` | Where the bootloader (boot ROM) jumps. Below it, only a 256-byte header at `0x08000000`, no code. |
 | `0x20000000`-`0x20045FFF` | SRAM, **280 KB** |
 | `0x40000000`, `0x48000000`, `0x50000000`, `0x52000000` | peripherals |
 | `0x60000000`-`0x60001FFF` | security / crypto block, holds the reference clock value |
@@ -106,6 +106,26 @@ there.
 | `+0x28` | 1 | set only by the LCD init, next to bit 0 | none; purpose unknown |
 | `+0x38` | 4 | set with every GPIO clock enable, and before the boot ROM's accesses to `0x40010400`, the EXTI block `HAL_GPIO_Init` writes | EXTI clock |
 | `+0x38` | 6 | the off/on toggle before the TIM1 setup | that the toggle also resets TIM1 |
+
+**Set by the boot ROM**: its reset routine (`0x000007FC`), which ends by
+jumping to `0x08004000`, ORs these in before touching the flash interface
+and the other peripherals. They are all set together, so nothing ties a
+bit to one peripheral; this firmware leaves them as they are.
+
+| Register | Boot ROM sets | Running value under DOOM | Remaining bits |
+|---|---|---|---|
+| `+0x28` | `0x00000020` (bit 5) | `0x10000423` | 0, 1, 10 ours; **28 set by no code found** |
+| `+0x2C` | `0x07C00004` (bits 2, 22-26) | `0x07C00007` | 0, 1, 2 ours (GPIOC also set by the boot ROM) |
+| `+0x30` | `0x00000011` | not read | not used by this firmware |
+| `+0x34` | `0x08000000` (bit 27) | `0x08020000` | 17 ours |
+| `+0x38` | `0x00000001` (bit 0) | `0x00000251` | 4, 6, 9 ours |
+
+`+0x28` bit 28 is written neither by the boot ROM (its `+0x28` writes are
+`0x20` on the normal boot path, `0x10` and `0x800` in download mode) nor
+by this firmware. A power-on default or a read-only status bit is
+assumed. It cannot be checked over SWD: a `reset halt` (SYSRESETREQ)
+leaves the RCC enables as they were, and without the reset pin the core
+cannot be stopped before the boot ROM runs.
 
 `firmware/sdk/soc.h` names them `RCC_EN0` (`+0x28`), `RCC_EN1` (`+0x2C`),
 `RCC_EN3` (`+0x34`) and `RCC_EN2` (`+0x38`), each bit tagged `[V]` or
