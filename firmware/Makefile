@@ -61,7 +61,8 @@ LDFLAGS = $(ARCH) -nostartfiles --specs=nano.specs --specs=nosys.specs \
 SKIP     = $(GBA)/source/doom_iwad.c $(GBA)/source/i_audio.c
 ENGINE   = $(filter-out $(SKIP), $(wildcard $(GBA)/source/*.c))
 PORTSRC  = $(PORT)/i_system_console.c $(PORT)/doom_iwad_flash.c \
-           $(PORT)/i_sound_console.c
+           $(PORT)/i_sound_console.c $(PORT)/i_music_console.c \
+           $(PORT)/opl2.c
 SDKSRC   = $(SDK)/startup.c $(SDK)/clock.c $(SDK)/lcd.c $(SDK)/input.c \
            $(SDK)/hostbox.c $(SDK)/audio.c $(SDK)/uart.c
 

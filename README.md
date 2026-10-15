@@ -56,6 +56,11 @@ On **both** consoles:
 * **Sound effects** as 8-bit PWM from TIM1 at `0x40012C00`, DMA channel 0, mixer
   in `firmware/port/i_sound_console.c`. Menu blips and in-game SFX are
   confirmed. The WAD at `0x08090000` includes the `DS*` lumps
+* **Music**: DOOM's MUS songs on a software OPL2 with the `GENMIDI`
+  instruments, nine voices as DMX drives the chip
+  (`firmware/port/opl2.c`, `firmware/port/i_music_console.c`), for about
+  6-8 % of the CPU. Needs a WAD with the music lumps,
+  `wad/doom1_e1m3_music.wad`
 * Every button - eleven on the 104 Games, eight on the Pac-Man. On the
   104 Games the **volume button** ping-pongs four software gains (loud /
   mid / quiet / mute), as the stock firmware did. Pac-Man's VOL+/VOL-
@@ -66,8 +71,6 @@ On **both** consoles:
 
 ## What does not
 
-* **No music.** DOOM's MUS lumps would need a synth; that is left out on
-  purpose. Effects only.
 * **The screen wipe looks wrong.** Front and back buffer share memory to
   save 38 KB.
 * Only three maps fit alongside the firmware and the sound lumps in 4 MB,
