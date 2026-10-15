@@ -12,77 +12,119 @@ index 471f204..26e44e0 100644
  extern const unsigned int doom_iwad_len;
  
  #endif // DOOM_IWAD_H
+diff --git upstream/source/d_client.c repo/source/d_client.c
+index 650934b..c075326 100644
+--- upstream/source/d_client.c
++++ repo/source/d_client.c
+@@ -92,6 +92,14 @@ void TryRunTics (void)
+     int runtics;
+     int entertime = I_GetTime();
+ 
++#ifdef PROFILE
++    /* Changed for this console: PROFILE builds count the cycles spent
++     * waiting for the next tic, read over SWD by tools/profile.py. The
++     * interrupts taken meanwhile have their own counters and are left out. */
++    extern volatile uint32_t prof_idle_cyc, prof_audio_cyc, prof_push_cyc;
++    const uint32_t prof_t0 = *(volatile uint32_t *)0xE0001004u; /* DWT_CYCCNT */
++    const uint32_t prof_irq0 = prof_audio_cyc + prof_push_cyc;
++#endif
+     // Wait for tics to run
+     while (1)
+     {
+@@ -110,6 +118,10 @@ void TryRunTics (void)
+         else
+             break;
+     }
++#ifdef PROFILE
++    prof_idle_cyc += *(volatile uint32_t *)0xE0001004u - prof_t0
++                   - (prof_audio_cyc + prof_push_cyc - prof_irq0);
++#endif
+ 
+     while (runtics-- > 0)
+     {
 diff --git upstream/source/d_main.c repo/source/d_main.c
-index 48d3085..ef02a4f 100644
+index 48d3085..8e67ab5 100644
 --- upstream/source/d_main.c
 +++ repo/source/d_main.c
-@@ -386,6 +386,13 @@ static struct
-     const char *name;
- }
+@@ -439,6 +439,56 @@ const demostates[][4] =
+ 
+ };
  
 +/*
-+ * Changed for this console: the attract loop played demos, and those are
-+ * recorded in levels from other episodes. The trimmed WAD contains only
-+ * E1M1, so the engine aborted with "W_GetNumForName: E1M5 not found".
-+ * The sequence now shows the title screen throughout instead.
-+ * Drop this patch if you flash a full WAD.
++ * Changed for this console: the flash only holds a trimmed WAD, and the
++ * shareware demos are recorded in E1M5, E1M3 and E1M7. A demo whose map
++ * is not in the WAD would abort with "W_GetNumForName: E1M5 not found",
++ * so the title screen is shown in its place.
 + */
- const demostates[][4] =
- {
-     {
-@@ -396,10 +403,10 @@ const demostates[][4] =
-     },
++static boolean D_DemoMapExists(const char *demo)
++{
++    char name[9];
++    int lump;
++    const byte *p;
++    int episode, map;
++
++    /* Lump names are matched exactly; G_DoPlayDemo upper-cases the demo
++     * name the same way. */
++    ExtractFileBase(demo, name);
++    name[8] = 0;
++    lump = W_CheckNumForName(name);
++    if (lump == -1)
++        return false;
++
++    p = W_CacheLumpNum(lump);
++
++    /* Up to 1.2 the header starts with the skill, from 1.4 with a version
++     * byte (104-111) followed by the skill. */
++    if (p[0] >= 104 && p[0] <= 111)
++        p++;
++    episode = p[1];
++    map = p[2];
++
++    if (_g->gamemode == commercial)
++    {
++        if (map < 1 || map > 99) return false;
++        name[0] = 'M'; name[1] = 'A'; name[2] = 'P';
++        name[3] = '0' + (map / 10);
++        name[4] = '0' + (map % 10);
++        name[5] = 0;
++    }
++    else
++    {
++        if (episode < 1 || episode > 9 || map < 1 || map > 9) return false;
++        name[0] = 'E';
++        name[1] = '0' + episode;
++        name[2] = 'M';
++        name[3] = '0' + map;
++        name[4] = 0;
++    }
++    return W_CheckNumForName(name) != -1;
++}
++
+ /*
+  * This cycles through the demo sequences.
+  * killough 11/98: made table-driven
+@@ -457,6 +507,13 @@ void D_DoAdvanceDemo(void)
+     if (!demostates[++_g->demosequence][_g->gamemode].func)
+         _g->demosequence = 0;
  
-     {
--        {G_DeferedPlayDemo, "demo1"},
--        {G_DeferedPlayDemo, "demo1"},
--        {G_DeferedPlayDemo, "demo1"},
--        {G_DeferedPlayDemo, "demo1"},
-+        {D_SetPageName, "TITLEPIC"},
-+        {D_SetPageName, "TITLEPIC"},
-+        {D_SetPageName, "TITLEPIC"},
-+        {D_SetPageName, "TITLEPIC"},
-     },
-     {
-         {D_SetPageName, "TITLEPIC"},
-@@ -409,10 +416,10 @@ const demostates[][4] =
-     },
++    if (demostates[_g->demosequence][_g->gamemode].func == G_DeferedPlayDemo &&
++        !D_DemoMapExists(demostates[_g->demosequence][_g->gamemode].name))
++    {
++        D_SetPageName("TITLEPIC");
++        return;
++    }
++
+     demostates[_g->demosequence][_g->gamemode].func(demostates[_g->demosequence][_g->gamemode].name);
+ }
  
-     {
--        {G_DeferedPlayDemo, "demo2"},
--        {G_DeferedPlayDemo, "demo2"},
--        {G_DeferedPlayDemo, "demo2"},
--        {G_DeferedPlayDemo, "demo2"},
-+        {D_SetPageName, "TITLEPIC"},
-+        {D_SetPageName, "TITLEPIC"},
-+        {D_SetPageName, "TITLEPIC"},
-+        {D_SetPageName, "TITLEPIC"},
-     },
- 
-     {
-@@ -423,10 +430,10 @@ const demostates[][4] =
-     },
- 
-     {
--        {G_DeferedPlayDemo, "demo3"},
--        {G_DeferedPlayDemo, "demo3"},
--        {G_DeferedPlayDemo, "demo3"},
--        {G_DeferedPlayDemo, "demo3"},
-+        {D_SetPageName, "TITLEPIC"},
-+        {D_SetPageName, "TITLEPIC"},
-+        {D_SetPageName, "TITLEPIC"},
-+        {D_SetPageName, "TITLEPIC"},
-     },
- 
-     {
-@@ -607,6 +614,16 @@ static void IdentifyVersion()
+@@ -607,6 +664,16 @@ static void IdentifyVersion()
  
      if (_g->gamemode == indetermined)
      {
 +        /*
 +         * Changed for this console: the game mode is inferred from the
 +         * number of levels present (sw >= 9 for shareware). Our WAD holds
-+         * only E1M1, so no threshold matches and the mode would stay
++         * fewer maps, so no threshold matches and the mode would stay
 +         * "indetermined". M_NewGame then picks the four-entry episode menu
 +         * and aborts with "M_EPI4 not found", because episode 4 only
 +         * exists in Ultimate Doom.
@@ -133,41 +175,67 @@ index d52386d..1a57844 100644
      if (thistimereply < _g->lasttimereply)
      {
 diff --git upstream/source/z_zone.c repo/source/z_zone.c
-index d4de6a2..582ffd9 100644
+index d4de6a2..1930a2c 100644
 --- upstream/source/z_zone.c
 +++ repo/source/z_zone.c
-@@ -40,7 +40,12 @@
+@@ -40,9 +40,17 @@
  
  #define ZONEID	0x1d4a11
  
 -const unsigned int maxHeapSize = (256 * 1024);
+-
+-#ifndef GBA
 +/* Changed for this console: usable SRAM is 0x20000000-0x20045FFF (280 KB,
 + * measured on the device). Roughly 62 KB go to .bss including the
 + * framebuffer and 8 KB to the stack, leaving about 209 KB.
 + * Z_Init would shrink the request itself, but in 4-byte steps - starting
 + * from a realistic value skips that very long loop. */
 +const unsigned int maxHeapSize = (200 * 1024);
- 
- #ifndef GBA
++
++/* Changed for this console: the allocation log is opt-in (-DZONE_LOG).
++ * printf goes to the 115200 baud UART, where each line blocks about
++ * 1.7 ms, and things are allocated and freed all through a firefight. */
++#ifdef ZONE_LOG
      static int running_count = 0;
+ #endif
+ 
+@@ -131,7 +139,7 @@ void Z_Free (void* ptr)
+     block->tag = 0;
+ 
+ 
+-#ifndef GBA
++#ifdef ZONE_LOG
+     running_count -= block->size;
+     printf("Free: %d\n", running_count);
+ #endif
+@@ -274,7 +282,7 @@ void* Z_Malloc(int size, int tag, void **user)
+     // next allocation will start looking here
+     mainzone->rover = base->next;
+ 
+-#ifndef GBA
++#ifdef ZONE_LOG
+     running_count += base->size;
+     printf("Alloc: %d (%d)\n", base->size, running_count);
+ #endif
 diff --git upstream/source/g_game.c repo/source/g_game.c
-index 2275c69..cf802cc 100644
+index 2275c69..da533b7 100644
 --- upstream/source/g_game.c
 +++ repo/source/g_game.c
-@@ -671,10 +671,57 @@ void G_SecretExitLevel (void)
+@@ -671,6 +671,50 @@ void G_SecretExitLevel (void)
  // G_DoCompleted
  //
  
 +/*
-+ * Changed for this console: reboot when the finished level has no
-+ * successor in the WAD.
++ * Changed for this console: reboot when the level the exit leads to is
++ * not in the WAD.
 + *
-+ * The flash only fits a trimmed IWAD, so after E1M1 there is no E1M2.
-+ * A first attempt returned to the title screen from G_DoWorldDone, which
-+ * still hung - the intermission screen runs before that and wants
-+ * graphics for the "next level" that are not there either. So the reset
-+ * goes here, at the very first instruction after the exit is taken, where
-+ * nothing downstream can trip over the missing map.
++ * The flash only fits a trimmed IWAD, so the last map in it has no
++ * successor, and a secret exit leads to a secret level that is not there.
++ * The check is on wminfo.next, the map G_DoCompleted has just chosen, so
++ * normal and secret exits and the return from a secret level are all
++ * covered. It runs before WI_Start: the intermission screen wants the
++ * next level's graphics, and loading the level would fail on the missing
++ * map.
 + *
 + * A system reset is a clean restart on this console: the boot ROM runs,
 + * the bootloader re-initialises the flash controller and jumps back to
@@ -175,10 +243,9 @@ index 2275c69..cf802cc 100644
 + *
 + * Harmless with a full WAD: the next map exists and this does nothing.
 + */
-+static boolean G_NextMapExists(void)
++static boolean G_MapExists(int map)
 +{
 +    char name[9];
-+    int  map = _g->gamemap + 1;
 +
 +    if (_g->gamemode == commercial)
 +    {
@@ -205,13 +272,16 @@ index 2275c69..cf802cc 100644
  void G_DoCompleted (void)
  {
      _g->gameaction = ga_nothing;
+@@ -737,6 +781,9 @@ void G_DoCompleted (void)
+                 _g->wminfo.next = _g->gamemap;          // go to next level
+     }
  
-+    if (!G_NextMapExists())
++    if (!G_MapExists(_g->wminfo.next + 1))
 +        I_Reboot_console();        // does not return
 +
-     if (_g->playeringame)
-         G_PlayerFinishLevel(0);        // take away cards and stuff
- 
+     _g->wminfo.maxkills = _g->totalkills;
+     _g->wminfo.maxitems = _g->totalitems;
+     _g->wminfo.maxsecret = _g->totalsecret;
 diff --git upstream/source/lprintf.c repo/source/lprintf.c
 index d5ef6bc..6010c09 100644
 --- upstream/source/lprintf.c

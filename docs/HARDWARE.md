@@ -42,6 +42,38 @@ The stock firmware also names the GUI framework it was built with:
 `unsupport platform,please contact www.zkswe.com`. The application on top
 is an NES emulator (`checkNESMagic: skipped rom with invalid mapper #%d`).
 
+### Caches
+
+Read over SWD: `CLIDR` = `0x09200003` (separate L1 instruction and data
+caches), and for the data cache `CCSIDR` = `0xF007E019`: 64 sets, 4 ways,
+32-byte lines, so 8 KB, with write-through and write-back both supported.
+`MPU_TYPE` = `0x00000800`: 8 MPU regions. The cache maintenance registers
+are the Cortex-M7 ones; Aisinochip's ACM32H5 SDK drives them through
+`core_cm7.h` (`System_EnableDAccelerate()` in `system_accelerate.c`).
+
+The firmware enables both caches in `clock_init()`. Whether the stock
+firmware enables the D-cache was not checked.
+
+| MPU region | Range | Attributes | Why |
+|---|---|---|---|
+| 0 | `0x20000000`-`0x200000FF` | normal, non-cacheable | the host mailbox, which the debugger writes |
+| 1 | `0x20000100`-`0x2007FFFF` | normal, write-through, read-allocate | DMA reads the audio and pixel buffers from SRAM |
+| default | everything else | default memory map | flash (Code region) is cacheable write-through |
+
+Write-through keeps SRAM current for the DMA and for SWD reads, so the
+drivers need no cache maintenance. Nothing DMAs into RAM.
+
+The D-cache is what makes reading the WAD out of the XIP flash fast.
+Measured in demo 2 at 194 MHz, before and after enabling it:
+
+| | Without | With |
+|---|---|---|
+| Frame rate | 33.7 fps | 35 fps (the tic rate) |
+| Engine | ~55 % of the CPU | ~22 % |
+| LCD push | 8.4 ms per frame | 6.8 ms |
+| Audio refill | 7.8 % | 3.3 % |
+| Idle | 8.8 % | 50.7 % |
+
 ## Memory map
 
 | Range | Contents |
@@ -325,6 +357,13 @@ The window commands `0x2A`/`0x2B`/`0x2C` are not part of the init: the
 stock fill routine (`0x0800586C`) sends them. It pushes the picture one
 line at a time from a line buffer at `0x20044BEC`, as `lcd.c` does.
 
+The case hides the panel's edges. A ruler pattern drawn over the full
+320x240 and photographed through the window showed about columns 26-291
+and rows 12-228, give or take 3 pixels - roughly 266x218, centred.
+`port/i_system_console.c` scales DOOM's 240x160 frame to 264x198 at
+(28, 21): the visible width, at the 4:3 shape the DOOM art was drawn for.
+Stretching to the full 264x216 was tried and looked too tall.
+
 ### PAC-MAN
 
 78-byte init sequence, in `firmware/boards/pacman/board.h`. Two differences
@@ -471,6 +510,15 @@ SPI `+0x20` = length, `+0x0C` bits `0x1d`, start `+0x24` bit 0, and
 touch channel 0. `lcd.c` `spi_write()` uses this for transfers above 16
 bytes. Audio channel 0 is unchanged.
 
+**Interrupts.** The G103 manual's bits work: CTRL bit 31 (`ITC`) sets the
+channel's bit in `INTTCSTATUS` (`+0x04`) at the end of a transfer, CONFIG
+bit 5 (`ITC`) lets that raise an interrupt, and writing the bit to
+`INTTCCLR` (`+0x08`) acknowledges it. Unlike the G103, which has one DMA1
+interrupt (IRQ 12), each channel has its own: channel 2 raised **IRQ 9**
+and channel 3 **IRQ 10** (a 4-byte memory-to-memory copy started over SWD,
+then NVIC `ISPR0` read). Channels 0 and 1 were not tried. The frame push
+runs from the channel 2 interrupt, one panel row per interrupt.
+
 ### How the stock firmware plays sound
 
 Two ping-pong buffers at `0x20044000` and `0x200445CA` hold 16-bit
@@ -584,9 +632,9 @@ Two smaller findings worth keeping:
 ### The WAD
 
 GBADoom's shipped WAD has **no sound lumps** (`GbaWadUtil` strips them for
-Maxmod). `wad/doom1_e1m1_sfx.wad` is E1M1 plus the 55 `DS*` lumps from
-shareware `doom1.wad` (`tools/merge_sfx.py`). That is ~3.1 MB, so the WAD
-base is **`0x08090000`**, not `0x08110000`.
+Maxmod). `wad/doom1_e1m5_music.wad` is E1M1-E1M5 plus the 55 `DS*` lumps
+and the `D_*` music from shareware `doom1.wad` (`tools/merge_sfx.py`,
+`tools/edit_wad.py`). That is ~3.3 MB, so the WAD base is **`0x08090000`**, not `0x08110000`.
 
 ## Three ways to lose the debug port
 

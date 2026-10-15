@@ -3,19 +3,22 @@
 #   make                     build for the default board (action104)
 #   make BOARD=pacman        build for another board
 #   make CLOCK_BOOST=0       stay at ~62 MHz (no PLL switch, SWD stays usable)
+#   make PROFILE=1           add cycle counters for tools/profile.py
 #   make clean
 #
-# Output lands in build/<board>/doom.bin (build/<board>-62mhz/ without boost)
+# Output lands in build/<board>/doom.bin (build/<board>-62mhz/ without boost,
+# with -prof appended for PROFILE=1)
 #
 # Set CROSS to your arm-none-eabi prefix if it is not on PATH:
 #   make CROSS=/path/to/arm-none-eabi-
 #
 # Flashing is a separate step, see docs/FLASHING.md:
 #   python ../tools/flash.py write build/action104/doom.bin 0x08004000 --leave-halted
-#   python ../tools/flash.py write ../wad/doom1_e1m1_sfx.wad 0x08090000 --leave-halted
+#   python ../tools/flash.py write ../wad/doom1_e1m5_music.wad 0x08090000 --leave-halted
 
 BOARD  ?= action104
 CLOCK_BOOST ?= 1
+PROFILE ?= 0
 CROSS  ?= arm-none-eabi-
 
 CC      = $(CROSS)gcc
@@ -35,6 +38,10 @@ else
 BUILD   = build/$(BOARD)-62mhz
 BOOST   =
 endif
+ifeq ($(PROFILE),1)
+BUILD  := $(BUILD)-prof
+PROF    = -DPROFILE
+endif
 
 # The core is a STAR-MC1: ARMv8-M Mainline, Cortex-M33 compatible.
 # Soft float on purpose - the FPU is enabled but DOOM does not need it.
@@ -45,7 +52,7 @@ CFLAGS  = $(ARCH) -std=gnu11 -O2 -g3 -ffreestanding \
           -Wall -Wno-switch-outside-range -Wno-unused -Wno-sign-compare \
           -Wno-incompatible-pointer-types \
           -I$(GBA)/include -I$(SDK) -I$(PORT) -I$(BOARDIR) \
-          $(BOOST)
+          $(BOOST) $(PROF)
 
 LDFLAGS = $(ARCH) -nostartfiles --specs=nano.specs --specs=nosys.specs \
           -Wl,--gc-sections -Wl,-Map,$(BUILD)/doom.map
@@ -54,7 +61,8 @@ LDFLAGS = $(ARCH) -nostartfiles --specs=nano.specs --specs=nosys.specs \
 SKIP     = $(GBA)/source/doom_iwad.c $(GBA)/source/i_audio.c
 ENGINE   = $(filter-out $(SKIP), $(wildcard $(GBA)/source/*.c))
 PORTSRC  = $(PORT)/i_system_console.c $(PORT)/doom_iwad_flash.c \
-           $(PORT)/i_sound_console.c
+           $(PORT)/i_sound_console.c $(PORT)/i_music_console.c \
+           $(PORT)/opl2.c
 SDKSRC   = $(SDK)/startup.c $(SDK)/clock.c $(SDK)/lcd.c $(SDK)/input.c \
            $(SDK)/hostbox.c $(SDK)/audio.c $(SDK)/uart.c
 

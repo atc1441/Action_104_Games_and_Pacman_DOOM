@@ -26,6 +26,7 @@
 
 #include "audio.h"
 #include "input.h"
+#include "i_music_console.h"
 
 /*
  * Output rate, set from audio_rate() at init. TIM1 requests one sample per
@@ -187,6 +188,18 @@ void audio_fill(uint16_t *dst, unsigned n)
  * cancel; it is clamped rather than wrapped, because wrapping a mix turns
  * a loud moment into a burst of noise.
  */
+/*
+ * Music is synthesised at half the output rate, which is plenty for the
+ * OPL2's sound and halves its cost, and each music sample is used twice.
+ * A block of odd length leaves its last music sample half used; it is
+ * carried into the next block.
+ */
+#define MUSIC_GAIN 2
+
+static int32_t music_buf[AUDIO_BUF_SAMPLES / 2 + 1];
+static int32_t music_carry;
+static int     music_has_carry;
+
 void audio_fill(uint16_t *dst, unsigned n)
 {
     /* Stock DAT_2000044c is 0..3 with divisors 5 / 2 / 1 (and 0 = mute).
@@ -194,8 +207,21 @@ void audio_fill(uint16_t *dst, unsigned n)
     const unsigned v = input_volume();
     const unsigned shift = (v == 0) ? 0 : (7u + 3u - v);
 
+    /* Output sample i takes music_buf[(i + first) / 2]; with a carry,
+     * music_buf[0] is the carried sample and serves output 0 alone. */
+    unsigned first = 0;
+    if (music_has_carry && n) {
+        music_buf[0] = music_carry;
+        first = 1;
+    }
+    const unsigned need = (n - first + 1u) / 2u;
+    memset(music_buf + first, 0, need * sizeof music_buf[0]);
+    I_MusicRender(music_buf + first, need);
+    music_has_carry = ((n - first) & 1u) != 0;
+    music_carry = music_buf[first + need - 1u];
+
     for (unsigned i = 0; i < n; i++) {
-        int32_t acc = 0;
+        int32_t acc = music_buf[(i + first) >> 1] * MUSIC_GAIN;
 
         for (unsigned ch = 0; ch < NUM_CHANNELS; ch++) {
             chan_t *c = &chans[ch];
@@ -234,18 +260,10 @@ void I_InitSound(void)
 
     audio_init();
     out_rate = audio_rate();
+    I_MusicInit(out_rate / 2u);
     sound_ready = 1;
 
     lprintf(LO_INFO, "I_InitSound: TIM1 PWM at %lu Hz", (unsigned long)out_rate);
 }
 
-/*
- * Music. DOOM's MUS format needs an OPL synth to sound like anything, and
- * that is a poor trade on a core that is already busy rendering.
- * The hooks stay so the engine has something to call.
- */
-void I_PlaySong(int handle, int looping)  { (void)handle; (void)looping; }
-void I_PauseSong(int handle)              { (void)handle; }
-void I_ResumeSong(int handle)             { (void)handle; }
-void I_StopSong(int handle)               { (void)handle; }
-void I_SetMusicVolume(int volume)         { (void)volume; }
+/* The music hooks (I_PlaySong and the rest) are in i_music_console.c. */

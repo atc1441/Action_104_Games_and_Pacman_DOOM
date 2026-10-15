@@ -9,7 +9,8 @@
  * Frame format: GBADoom writes its framebuffer as unsigned short, i.e.
  * two 8-bit palette indices per 16-bit word. SCREENWIDTH = 120 therefore
  * means 240 real pixels, and the image is 240 x 160. The panel is
- * 320 x 240, so the image is centred with a 40-pixel border.
+ * 320 x 240, of which the case shows about 266 x 218, and the frame is
+ * scaled to the width of that (see Geometry).
  *
  * The WAD is NOT in RAM. w_wad.c reaches into it directly via
  * &doom_iwad[filepos], and here doom_iwad points into the XIP window of
@@ -39,16 +40,42 @@
 /* ------------------------------------------------------------------ *
  * Geometry
  * ------------------------------------------------------------------ */
+/*
+ * The case covers the panel's edges: a test pattern showed about columns
+ * 26-291 and rows 12-228, give or take 3 pixels. The 240 x 160 frame is
+ * scaled, nearest neighbour, to 264 x 198 centred on the panel: 11/10
+ * across to fill the visible width, and 4:3 overall, the shape the DOOM
+ * art was drawn for. Building with -DFRAME_KEEP_ASPECT keeps the GBA's
+ * 3:2 shape instead, 264 x 176.
+ */
 #define DOOM_W   240           /* real pixels, = 2 * SCREENWIDTH */
 #define DOOM_H   160
-#define ORIGIN_X ((LCD_WIDTH  - DOOM_W) / 2)
-#define ORIGIN_Y ((LCD_HEIGHT - DOOM_H) / 2)
+#define OUT_W    264
+#ifdef FRAME_KEEP_ASPECT
+#define OUT_H    176
+#else
+#define OUT_H    198
+#endif
+#define ORIGIN_X ((LCD_WIDTH  - OUT_W) / 2)
+#define ORIGIN_Y ((LCD_HEIGHT - OUT_H) / 2)
+
+/* Source pixel for output pixel i of n, sampled at the pixel centre. */
+#define SRC_OF(i, n, src) ((unsigned)(((2u * (i) + 1u) * (src)) / (2u * (n))))
 
 /* ------------------------------------------------------------------ *
  * Palette: DOOM hands over 256 RGB888 entries, the panel wants RGB565
  * ------------------------------------------------------------------ */
+/*
+ * Stored byte-swapped: the panel wants the high byte first, and a 16-bit
+ * store on this little-endian core then puts it first in memory.
+ */
 static uint16_t pal565[256];
-static uint8_t  row_rgb[DOOM_W * 2];
+
+/* Two rows, so one can be filled while DMA sends the other. */
+static uint16_t row_rgb[2][OUT_W];
+
+/* Source column of each output column, filled by I_InitScreen_e32. */
+static uint8_t col_src[OUT_W];
 
 void I_SetPallete_e32(const byte *pallete)
 {
@@ -58,7 +85,8 @@ void I_SetPallete_e32(const byte *pallete)
         unsigned r = *pallete++;
         unsigned g = *pallete++;
         unsigned b = *pallete++;
-        pal565[i] = (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+        const uint16_t c = (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+        pal565[i] = (uint16_t)((c >> 8) | (c << 8));
     }
 }
 
@@ -74,7 +102,8 @@ void I_SetPallete_e32(const byte *pallete)
  * needed plus a full A-Z and 0-9, which is small enough not to matter and
  * saves the next person from adding them.
  * ------------------------------------------------------------------ */
-#define OVL_X   3
+/* Top right, clear of the engine's messages, which start on the left. */
+#define OVL_X   (DOOM_W - 3u - (sizeof(ovl_text) - 1u) * OVL_ADV)
 #define OVL_Y   3
 #define OVL_H   7
 #define OVL_ADV 6                       /* 5 px glyph + 1 px gap */
@@ -146,78 +175,177 @@ static int overlay_pixel(unsigned x, unsigned y)
     return (g[c] & (1u << (y - OVL_Y))) ? 1 : 0;
 }
 
+/* Can source row y / column x touch the overlay? Same bounds as above. */
+static int ovl_row(unsigned y)
+{
+    return !(y + 1 < OVL_Y || y > OVL_Y + OVL_H);
+}
+
+static int ovl_col(unsigned x)
+{
+    return !(x + 1 < OVL_X || x > OVL_X + (sizeof(ovl_text) - 1) * OVL_ADV);
+}
+
+/* Output pixel for an overlay_pixel() result and the source index. */
+static uint16_t ovl_rgb(int ov, byte idx)
+{
+    if (ov < 0)  return pal565[idx];
+    if (ov == 0) return 0x0000;
+    return 0xFFFF;
+}
+
 /* ------------------------------------------------------------------ *
  * Video output
+ *
+ * The frame goes to the panel in the background. I_FinishUpdate_e32
+ * converts the first two rows and starts the first; from then on the DMA
+ * interrupt at the end of each row starts the next one and converts the
+ * one after it into the buffer just freed. The engine meanwhile runs its
+ * tics, and only waits in I_GetBackBuffer, before it draws again.
  * ------------------------------------------------------------------ */
+#ifdef BOARD_LCD_ROT90
+/*
+ * Quarter turn the other way, done here because this board's panel
+ * ignores MADCTL. Swapping which source coordinate is mirrored is what
+ * turns it by a further 180 degrees.
+ * The image becomes 160 wide and 240 tall, which fills the short edge
+ * exactly. Reading down a source column instead of along a row costs a
+ * strided access per pixel and no extra memory.
+ */
+#define PUSH_ROWS  DOOM_W
+#define PUSH_LEN   DOOM_H
+#else
+#define PUSH_ROWS  OUT_H
+#define PUSH_LEN   OUT_W
+#endif
+
+static const byte *push_src;           /* frame being sent               */
+static unsigned push_row;              /* row on the SPI now             */
+static volatile int push_busy;
+
+/* Output row y of push_src, as RGB565 ready for the panel. */
+static void push_convert(unsigned y, uint16_t *d)
+{
+#ifdef BOARD_LCD_ROT90
+    const unsigned sx = DOOM_W - 1u - y;  /* one source column per row */
+    const byte *s = push_src + sx;
+
+    if (ovl_col(sx)) {
+        for (unsigned x = 0; x < DOOM_H; x++)
+            d[x] = ovl_rgb(overlay_pixel(sx, x), s[x * DOOM_W]);
+    } else {
+        for (unsigned x = 0; x < DOOM_H; x++)
+            d[x] = pal565[s[x * DOOM_W]];
+    }
+#else
+    /* A source row shown twice is simply converted twice. */
+    const unsigned sy = SRC_OF(y, OUT_H, DOOM_H);
+    const byte *s = push_src + sy * DOOM_W;
+
+    if (ovl_row(sy)) {
+        for (unsigned x = 0; x < OUT_W; x++) {
+            const unsigned sx = col_src[x];
+            d[x] = ovl_rgb(overlay_pixel(sx, sy), s[sx]);
+        }
+    } else {
+        for (unsigned x = 0; x < OUT_W; x++)
+            d[x] = pal565[s[col_src[x]]];
+    }
+#endif
+}
+
+/* End of a row on the DMA side: start the next, convert the one after. */
+void DMA_CH2_IRQHandler(void)
+{
+#ifdef PROFILE
+    extern volatile uint32_t prof_push_cyc;
+    const uint32_t prof_t0 = DWT_CYCCNT;
+#endif
+    lcd_data_wait();
+
+    const unsigned y = ++push_row;
+    if (y < PUSH_ROWS) {
+        lcd_data_start_irq((const uint8_t *)row_rgb[y & 1u], PUSH_LEN * 2u);
+        if (y + 1u < PUSH_ROWS)
+            push_convert(y + 1u, row_rgb[(y + 1u) & 1u]);
+    } else {
+        push_busy = 0;
+    }
+#ifdef PROFILE
+    prof_push_cyc += DWT_CYCCNT - prof_t0;
+#endif
+}
+
+/* Until the frame being sent is out, the framebuffer must not change. */
+static void push_wait(void)
+{
+#ifdef PROFILE
+    /* Less the interrupts taken meanwhile, which have their own counters. */
+    extern volatile uint32_t prof_push_wait_cyc, prof_audio_cyc, prof_push_cyc;
+    const uint32_t prof_t0 = DWT_CYCCNT;
+    const uint32_t prof_irq0 = prof_audio_cyc + prof_push_cyc;
+    while (push_busy) { }
+    prof_push_wait_cyc += DWT_CYCCNT - prof_t0
+                        - (prof_audio_cyc + prof_push_cyc - prof_irq0);
+#else
+    while (push_busy) { }
+#endif
+}
+
 void I_FinishUpdate_e32(const byte *srcBuffer, const byte *pallete,
                         const unsigned int width, const unsigned int height)
 {
     if (!srcBuffer) return;
+    push_wait();
+#ifdef PROFILE
+    /* Frames pushed and cycles spent pushing them, read over SWD. */
+    extern volatile uint32_t prof_frames, prof_push_cyc;
+    const uint32_t prof_t0 = DWT_CYCCNT;
+    prof_frames++;
+#endif
     if (pallete) I_SetPallete_e32(pallete);
 
-    const unsigned pix_w = width * 2;      /* width counts 16-bit words */
-    const unsigned rows  = height;
-
 #ifdef BOARD_LCD_ROT90
-    /*
-     * Quarter turn the other way, done here because this board's panel
-     * ignores MADCTL. Swapping which source coordinate is mirrored is
-     * what turns it by a further 180 degrees.
-     * The image becomes 160 wide and 240 tall, which fills the short edge
-     * exactly. Reading down a source column instead of along a row costs
-     * a strided access per pixel and no extra memory.
-     */
-    const unsigned ow = rows;                 /* 160 */
-    const unsigned oh = pix_w;                /* 240 */
-    const unsigned ox = (LCD_WIDTH  - ow) / 2u;
-    const unsigned oy = (LCD_HEIGHT - oh) / 2u;
-
-    lcd_set_window(ox, oy, ox + ow - 1u, oy + oh - 1u);
-
-    for (unsigned y = 0; y < oh; y++) {
-        uint8_t *d = row_rgb;
-        for (unsigned x = 0; x < ow; x++) {
-            const unsigned sx = oh - 1u - y;
-            const unsigned sy = x;
-            uint16_t c;
-            const int ov = overlay_pixel(sx, sy);
-            if (ov < 0)       c = pal565[srcBuffer[sy * pix_w + sx]];
-            else if (ov == 0) c = 0x0000;
-            else              c = 0xFFFF;
-            *d++ = (uint8_t)(c >> 8);
-            *d++ = (uint8_t)(c);
-        }
-        lcd_data_buf(row_rgb, ow * 2u);
-    }
+    const unsigned ox = (LCD_WIDTH  - DOOM_H) / 2u;
+    const unsigned oy = (LCD_HEIGHT - DOOM_W) / 2u;
+    lcd_set_window(ox, oy, ox + DOOM_H - 1u, oy + DOOM_W - 1u);
 #else
     lcd_set_window(ORIGIN_X, ORIGIN_Y,
-                   ORIGIN_X + pix_w - 1, ORIGIN_Y + rows - 1);
+                   ORIGIN_X + OUT_W - 1u, ORIGIN_Y + OUT_H - 1u);
+#endif
 
-    for (unsigned y = 0; y < rows; y++) {
-        const byte *s = srcBuffer + y * pix_w;
-        uint8_t *d = row_rgb;
-
-        for (unsigned x = 0; x < pix_w; x++) {
-            uint16_t c;
-            const int ov = overlay_pixel(x, y);
-            if (ov < 0)       c = pal565[s[x]];
-            else if (ov == 0) c = 0x0000;
-            else              c = 0xFFFF;
-            *d++ = (uint8_t)(c >> 8);      /* the panel wants MSB first */
-            *d++ = (uint8_t)(c);
-        }
-        lcd_data_buf(row_rgb, pix_w * 2);
-    }
+    push_src  = srcBuffer;
+    push_row  = 0;
+    push_busy = 1;
+    push_convert(0, row_rgb[0]);
+    push_convert(1, row_rgb[1]);
+    lcd_data_start_irq((const uint8_t *)row_rgb[0], PUSH_LEN * 2u);
+#ifdef PROFILE
+    prof_push_cyc += DWT_CYCCNT - prof_t0;
 #endif
 }
+
+#ifdef PROFILE
+/*
+ * PROFILE builds only: cycle counters that tools/profile.py reads over
+ * SWD. prof_audio_cyc lives in sdk/audio.c, prof_spi_wait_cyc is added to
+ * in sdk/lcd.c and prof_idle_cyc in GBADoom's TryRunTics.
+ */
+volatile uint32_t prof_frames, prof_push_cyc, prof_idle_cyc, prof_spi_wait_cyc,
+                  prof_push_wait_cyc;
+#endif
 
 int  I_GetVideoWidth_e32(void)  { return 120; }   /* in 16-bit words */
 int  I_GetVideoHeight_e32(void) { return 160; }
 
 void I_InitScreen_e32(void)
 {
+    for (unsigned x = 0; x < OUT_W; x++)
+        col_src[x] = (uint8_t)SRC_OF(x, OUT_W, DOOM_W);
+
     lcd_init();
     lcd_fill(0x0000);
+    NVIC_ISER0 = 1u << DMA_CH2_IRQn;          /* frame push, see Video output */
     input_init();
     input_scan_init();
     /* input_init() puts PB0 back to GPIO in; claim USART2 pins again. */
@@ -229,7 +357,7 @@ void I_BlitScreenBmp_e32(void)   { }
 void I_CreateWindow_e32(void)    { }
 void I_CreateBackBuffer_e32(void){ }
 
-void I_ClearWindow_e32(void)     { lcd_fill(0x0000); }
+void I_ClearWindow_e32(void)     { push_wait(); lcd_fill(0x0000); }
 
 /* ------------------------------------------------------------------ *
  * Time - TICRATE is 35 Hz
@@ -407,8 +535,9 @@ int main(void)
 
 static unsigned short framebuffer[FB_SHORTS];
 
-unsigned short *I_GetBackBuffer(void)  { return framebuffer; }
-unsigned short *I_GetFrontBuffer(void) { return framebuffer; }
+/* Both wait for the frame being sent: the engine draws right after. */
+unsigned short *I_GetBackBuffer(void)  { push_wait(); return framebuffer; }
+unsigned short *I_GetFrontBuffer(void) { push_wait(); return framebuffer; }
 
 /* ------------------------------------------------------------------ *
  * Fatal error
@@ -431,6 +560,12 @@ void I_Error(const char *error, ...)
     uart_puts((const char *)g_hostbox.err_text);
     uart_puts("\n");
 
+    /* Stop the frame push; while it runs, a row is always on the SPI. */
+    NVIC_ICER0 = 1u << DMA_CH2_IRQn;
+    if (push_busy) {
+        lcd_data_wait();
+        push_busy = 0;
+    }
     lcd_fill(0xF800);          /* red */
     for (;;) { }
 }

@@ -49,13 +49,17 @@ the public ACM32 SDKs now serve as a reference for most blocks - see
 
 On **both** consoles:
 
-* DOOM (shareware E1M1) at a playable frame rate
+* DOOM (shareware E1M1-E1M5) at a playable frame rate
 * **~194 MHz PLL**, matching stock. MPI retune runs from RAM; flash the
   image with the probe leaving the core halted and power-cycle with SWD
   idle so the debugger is not attached across the clock source switch
 * **Sound effects** as 8-bit PWM from TIM1 at `0x40012C00`, DMA channel 0, mixer
   in `firmware/port/i_sound_console.c`. Menu blips and in-game SFX are
   confirmed. The WAD at `0x08090000` includes the `DS*` lumps
+* **Music**: DOOM's MUS songs on a software OPL2 with the `GENMIDI`
+  instruments, nine voices as DMX drives the chip
+  (`firmware/port/opl2.c`, `firmware/port/i_music_console.c`), for about
+  6-8 % of the CPU
 * Every button - eleven on the 104 Games, eight on the Pac-Man. On the
   104 Games the **volume button** ping-pongs four software gains (loud /
   mid / quiet / mute), as the stock firmware did. Pac-Man's VOL+/VOL-
@@ -66,12 +70,13 @@ On **both** consoles:
 
 ## What does not
 
-* **No music.** DOOM's MUS lumps would need a synth; that is left out on
-  purpose. Effects only.
 * **The screen wipe looks wrong.** Front and back buffer share memory to
   save 38 KB.
-* Only one map fits alongside the firmware and the sound lumps in 4 MB, so
-  the WAD here is trimmed to E1M1.
+* Only five maps fit alongside the firmware, the sound and the music in
+  4 MB, so the WAD here is trimmed to E1M1-E1M5. Finishing E1M5 restarts the
+  console to the title screen.
+* **The title loop's demo goes out of sync** after about 15 s and its
+  player dies. GBADoom lists demo compatibility as broken upstream.
 
 ---
 
@@ -237,7 +242,7 @@ the probe idle:
 
 ```sh
 python flash.py write ../firmware/build/action104/doom.bin 0x08004000 --leave-halted
-python flash.py write ../wad/doom1_e1m1_sfx.wad            0x08090000 --leave-halted
+python flash.py write ../wad/doom1_e1m5_music.wad          0x08090000 --leave-halted
 # CMSIS-DAP / OpenOCD: flash_openocd.py, same arguments
 ```
 
@@ -274,7 +279,7 @@ firmware/          the DOOM firmware, standalone build
   port/            GBADoom's platform layer (including the mixer)
   GBADoom/         vendored engine + engine-patches.diff
 tools/             flash.py (J-Link), flash_openocd.py (CMSIS-DAP), RAM writer, rescue
-wad/               trimmed shareware WAD (E1M1 + DS* sound lumps)
+wad/               trimmed shareware WAD (E1M1-E1M5, sound and music)
 dumps/             stock firmware and boot ROM, one folder per console
 docs/              hardware notes, SoC identification, flashing and porting guides
 images/            hardware photos and product listings
@@ -288,13 +293,14 @@ images/            hardware photos and product listings
   this port is built on, itself based on prboom. GBADoom was the right choice
   because it reads the WAD by pointer straight out of cartridge ROM, which
   maps perfectly onto these consoles' memory-mapped SPI flash. Upstream commit
-  `89097b3`. Six files are changed - heap size, time base, a missing
-  include that newer compilers reject, and three that only matter because
-  the WAD here holds a single map. All of them are
+  `89097b3`. Seven files are changed - heap size, time base, a missing
+  include that newer compilers reject, a cycle counter for profiling
+  builds, and three that only matter because the WAD here holds only part
+  of the episode. All of them are
   listed in [`firmware/GBADoom/engine-patches.diff`](firmware/GBADoom/engine-patches.diff)
   and commented in place.
 * **id Software** - DOOM. The WAD here is the freely redistributable shareware
-  IWAD, trimmed to a single map. The DOOM source code is GPL v2.
+  IWAD, trimmed to its first five maps. The DOOM source code is GPL v2.
 * **[atc1441/TXW818_WalkieTalkie_Doom](https://github.com/atc1441/TXW818_WalkieTalkie_Doom)**
   - reference for how to get GBADoom onto a small Cortex-M with a SPI panel.
 * **[NordicPlayground/nrf-doom](https://github.com/NordicPlayground/nrf-doom)**

@@ -47,7 +47,10 @@
  * from a realistic value skips that very long loop. */
 const unsigned int maxHeapSize = (200 * 1024);
 
-#ifndef GBA
+/* Changed for this console: the allocation log is opt-in (-DZONE_LOG).
+ * printf goes to the 115200 baud UART, where each line blocks about
+ * 1.7 ms, and things are allocated and freed all through a firefight. */
+#ifdef ZONE_LOG
     static int running_count = 0;
 #endif
 
@@ -136,7 +139,7 @@ void Z_Free (void* ptr)
     block->tag = 0;
 
 
-#ifndef GBA
+#ifdef ZONE_LOG
     running_count -= block->size;
     printf("Free: %d\n", running_count);
 #endif
@@ -279,7 +282,7 @@ void* Z_Malloc(int size, int tag, void **user)
     // next allocation will start looking here
     mainzone->rover = base->next;
 
-#ifndef GBA
+#ifdef ZONE_LOG
     running_count += base->size;
     printf("Alloc: %d (%d)\n", base->size, running_count);
 #endif

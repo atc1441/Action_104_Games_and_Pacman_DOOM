@@ -282,6 +282,17 @@ static inline void gpio_config(uint32_t port, uint32_t pin, uint32_t mode,
 #define DMA_LCD_CTRL_HI  0x04120000u   /* LCD SPI 8-bit one-shot           */
 #define DMA_LCD_CFG      0x00010003u   /* enable; not the audio 0x000A0083 */
 
+/*
+ * Transfer-complete interrupt, bits as in the ACM32G103 manual: CTRL ITC
+ * sets the channel's bit in INTTCSTATUS at the end, CFG ITC lets it raise
+ * an interrupt. Unlike the G103's single DMA1 IRQ 12, each channel has
+ * its own here: channel 2 raised IRQ 9 and channel 3 IRQ 10, found by
+ * running them with both bits set and reading NVIC ISPR0.
+ */
+#define DMA_CTRL_ITC     (1u << 31)
+#define DMA_CFG_ITC      (1u << 5)
+#define DMA_CH2_IRQn     9u
+
 /* ------------------------------------------------------------------ *
  * UART                                                       [V]
  *
@@ -314,6 +325,8 @@ static inline void gpio_config(uint32_t port, uint32_t pin, uint32_t mode,
 #define DWT_CTRL     REG32(0xE0001000u)
 #define DEMCR        REG32(0xE000EDFCu)
 #define SCB_SHPR3    REG32(0xE000ED20u)   /* bits 31:24 SysTick priority */
+#define NVIC_ISER0   REG32(0xE000E100u)   /* bit n enables IRQ n       */
+#define NVIC_ICER0   REG32(0xE000E180u)   /* bit n disables IRQ n      */
 
 #define SYST_CSR     REG32(0xE000E010u)
 #define SYST_RVR     REG32(0xE000E014u)   /* 24-bit reload value       */
