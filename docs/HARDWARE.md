@@ -632,9 +632,9 @@ Two smaller findings worth keeping:
 ### The WAD
 
 GBADoom's shipped WAD has **no sound lumps** (`GbaWadUtil` strips them for
-Maxmod). `wad/doom1_e1m3_sfx.wad` is E1M1-E1M3 plus the 55 `DS*` lumps
-from shareware `doom1.wad` (`tools/merge_sfx.py`, `tools/edit_wad.py`).
-That is ~3.4 MB, so the WAD base is **`0x08090000`**, not `0x08110000`.
+Maxmod). `wad/doom1_e1m5_music.wad` is E1M1-E1M5 plus the 55 `DS*` lumps
+and the `D_*` music from shareware `doom1.wad` (`tools/merge_sfx.py`,
+`tools/edit_wad.py`). That is ~3.3 MB, so the WAD base is **`0x08090000`**, not `0x08110000`.
 
 ## Three ways to lose the debug port
 
