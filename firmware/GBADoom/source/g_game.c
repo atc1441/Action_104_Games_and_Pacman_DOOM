@@ -672,17 +672,16 @@ void G_SecretExitLevel (void)
 //
 
 /*
- * Changed for this console: reboot when the finished level has no
- * successor in the WAD.
+ * Changed for this console: reboot when the level the exit leads to is
+ * not in the WAD.
  *
  * The flash only fits a trimmed IWAD, so the last map in it has no
- * successor. The check is on gamemap + 1, which also covers a secret
- * exit as long as the map after the secret level is missing too.
- * A first attempt returned to the title screen from G_DoWorldDone, which
- * still hung - the intermission screen runs before that and wants
- * graphics for the "next level" that are not there either. So the reset
- * goes here, at the very first instruction after the exit is taken, where
- * nothing downstream can trip over the missing map.
+ * successor, and a secret exit leads to a secret level that is not there.
+ * The check is on wminfo.next, the map G_DoCompleted has just chosen, so
+ * normal and secret exits and the return from a secret level are all
+ * covered. It runs before WI_Start: the intermission screen wants the
+ * next level's graphics, and loading the level would fail on the missing
+ * map.
  *
  * A system reset is a clean restart on this console: the boot ROM runs,
  * the bootloader re-initialises the flash controller and jumps back to
@@ -690,10 +689,9 @@ void G_SecretExitLevel (void)
  *
  * Harmless with a full WAD: the next map exists and this does nothing.
  */
-static boolean G_NextMapExists(void)
+static boolean G_MapExists(int map)
 {
     char name[9];
-    int  map = _g->gamemap + 1;
 
     if (_g->gamemode == commercial)
     {
@@ -720,9 +718,6 @@ extern void I_Reboot_console(void);   /* port/i_system_console.c */
 void G_DoCompleted (void)
 {
     _g->gameaction = ga_nothing;
-
-    if (!G_NextMapExists())
-        I_Reboot_console();        // does not return
 
     if (_g->playeringame)
         G_PlayerFinishLevel(0);        // take away cards and stuff
@@ -785,6 +780,9 @@ void G_DoCompleted (void)
             else
                 _g->wminfo.next = _g->gamemap;          // go to next level
     }
+
+    if (!G_MapExists(_g->wminfo.next + 1))
+        I_Reboot_console();        // does not return
 
     _g->wminfo.maxkills = _g->totalkills;
     _g->wminfo.maxitems = _g->totalitems;

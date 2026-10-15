@@ -122,8 +122,9 @@ that holds only part of the episode. All three do nothing with a full WAD:
 * the game mode is inferred from how many maps exist, and with fewer than
   nine no threshold matches. The four-episode menu would appear and abort
   with `M_EPI4 not found`, so the mode is forced to shareware.
-* finishing a level whose next map is missing restarts the console to the
-  title screen, without the stats screen.
+* an exit that leads to a missing map restarts the console to the title
+  screen, without the stats screen: the end of E1M5, and the secret exit
+  in E1M3, which leads to E1M9.
 
 ## Licence
 

@@ -218,25 +218,24 @@ index d4de6a2..1930a2c 100644
      printf("Alloc: %d (%d)\n", base->size, running_count);
  #endif
 diff --git upstream/source/g_game.c repo/source/g_game.c
-index 2275c69..747d61d 100644
+index 2275c69..da533b7 100644
 --- upstream/source/g_game.c
 +++ repo/source/g_game.c
-@@ -671,10 +671,59 @@ void G_SecretExitLevel (void)
+@@ -671,6 +671,50 @@ void G_SecretExitLevel (void)
  // G_DoCompleted
  //
  
 +/*
-+ * Changed for this console: reboot when the finished level has no
-+ * successor in the WAD.
++ * Changed for this console: reboot when the level the exit leads to is
++ * not in the WAD.
 + *
 + * The flash only fits a trimmed IWAD, so the last map in it has no
-+ * successor. The check is on gamemap + 1, which also covers a secret
-+ * exit as long as the map after the secret level is missing too.
-+ * A first attempt returned to the title screen from G_DoWorldDone, which
-+ * still hung - the intermission screen runs before that and wants
-+ * graphics for the "next level" that are not there either. So the reset
-+ * goes here, at the very first instruction after the exit is taken, where
-+ * nothing downstream can trip over the missing map.
++ * successor, and a secret exit leads to a secret level that is not there.
++ * The check is on wminfo.next, the map G_DoCompleted has just chosen, so
++ * normal and secret exits and the return from a secret level are all
++ * covered. It runs before WI_Start: the intermission screen wants the
++ * next level's graphics, and loading the level would fail on the missing
++ * map.
 + *
 + * A system reset is a clean restart on this console: the boot ROM runs,
 + * the bootloader re-initialises the flash controller and jumps back to
@@ -244,10 +243,9 @@ index 2275c69..747d61d 100644
 + *
 + * Harmless with a full WAD: the next map exists and this does nothing.
 + */
-+static boolean G_NextMapExists(void)
++static boolean G_MapExists(int map)
 +{
 +    char name[9];
-+    int  map = _g->gamemap + 1;
 +
 +    if (_g->gamemode == commercial)
 +    {
@@ -274,13 +272,16 @@ index 2275c69..747d61d 100644
  void G_DoCompleted (void)
  {
      _g->gameaction = ga_nothing;
+@@ -737,6 +781,9 @@ void G_DoCompleted (void)
+                 _g->wminfo.next = _g->gamemap;          // go to next level
+     }
  
-+    if (!G_NextMapExists())
++    if (!G_MapExists(_g->wminfo.next + 1))
 +        I_Reboot_console();        // does not return
 +
-     if (_g->playeringame)
-         G_PlayerFinishLevel(0);        // take away cards and stuff
- 
+     _g->wminfo.maxkills = _g->totalkills;
+     _g->wminfo.maxitems = _g->totalitems;
+     _g->wminfo.maxsecret = _g->totalsecret;
 diff --git upstream/source/lprintf.c repo/source/lprintf.c
 index d5ef6bc..6010c09 100644
 --- upstream/source/lprintf.c
